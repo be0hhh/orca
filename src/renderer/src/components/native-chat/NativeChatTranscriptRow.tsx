@@ -13,7 +13,7 @@ import type { NativeChatTaskListPredecessors } from '../../../../shared/native-c
 import type { NativeChatTranscriptSlot } from './native-chat-transcript-slots'
 import type { NativeChatDiffReveal, NativeChatDiffTarget } from './native-chat-turn-diffs'
 import { NativeChatRewindContext } from './native-chat-rewind-context'
-import { nativeChatRowOffersRewind } from './native-chat-rewind-eligibility'
+import { nativeChatRowOffersRewind } from '../../../../shared/native-chat/native-chat-rewind-eligibility'
 import { isActionableStructuredAgentSessionPrompt } from '../../../../shared/agent-session/view/structured-agent-session-live-turn'
 
 /** Memoize shared context so unchanged rows keep their props during transcript updates. */

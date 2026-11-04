@@ -1,5 +1,8 @@
 import { asyncQuestionSourceScope as questionSourceScope } from '../../../src/shared/native-chat/input/native-chat-ask'
-import { useCallback, useMemo, useRef } from 'react'
+import { useCallback, useContext, useMemo, useRef } from 'react'
+import { AGENT_SESSION_PHONE_REWIND_RUNTIME_CAPABILITY } from '../../../src/shared/agent-session/agent-session-runtime-capabilities'
+import { pendingStructuredSessionPrompts } from '../../../src/shared/agent-session/view/structured-agent-session-message-projection'
+import { WorkspaceServerContext } from '../transport/use-workspace-client'
 import { encodeNativeChatTranscriptIdentity } from '../../../src/shared/native-chat/transcript/native-chat-transcript-retention'
 import { projectStructuredAgentSessionMessages } from '../../../src/shared/agent-session/view/structured-agent-session-message-projection'
 import { createStructuredQuestionProjection } from '../../../src/shared/structured-agent-question-projection'
@@ -46,6 +49,7 @@ import { useMobileStructuredSends } from './use-mobile-structured-sends'
 import { useMobileNativeChatQueueFollowUps as useQueueFollowUps } from './use-mobile-native-chat-queue-follow-ups'
 import { useMobileStructuredStopOffer } from './use-mobile-structured-stop-offer'
 import { useMobileStructuredTurnIndicator } from './use-mobile-structured-turn-indicator'
+import { useMobileStructuredAgentRewind } from './use-mobile-structured-agent-rewind'
 
 const mobileStructuredTranscript = createStructuredQuestionProjection(
   projectStructuredAgentStartItem
@@ -178,7 +182,7 @@ export function useMobileStructuredAgentSession(
     queueSendsNext
   })
   const { stopping } = turnIndicator
-  const sendWithOutcome = useMobileStructuredSendWithOutcome({
+  const sendWithOutcomeUngated = useMobileStructuredSendWithOutcome({
     agent,
     client,
     sessionId,
@@ -212,6 +216,39 @@ export function useMobileStructuredAgentSession(
       prompt: approvalPrompt !== null || questionPrompt !== null
     }),
     [approvalPrompt, questionPrompt, queueSendsNext, turnId]
+  )
+  const workspaceServer = useContext(WorkspaceServerContext)
+  const rewind = useMobileStructuredAgentRewind({
+    client,
+    sessionId,
+    enabled: enabled && connected,
+    // A relaying desktop forwards only the methods it knows.
+    offered:
+      hostSupport?.phoneRewind === true &&
+      (workspaceServer?.desktopCapabilities.includes(
+        AGENT_SESSION_PHONE_REWIND_RUNTIME_CAPABILITY
+      ) ??
+        true),
+    state,
+    stateRef,
+    options,
+    // What the host refuses a rewind behind, its queued cards (paused ones included) among them.
+    blocked:
+      turnId !== null ||
+      backgroundTasks.view.isMonitoring ||
+      pendingStructuredSessionPrompts({ ...state, journalItems: state.items }).length > 0 ||
+      sendsOut.sending() ||
+      commandPendingRef.current ||
+      (queuedMessages?.length ?? 0) > 0,
+    composerScopeKey: args.composerScopeKey,
+    ...(agent ? { agentName: tuiAgentDisplayName(agent) ?? agent } : {}),
+    notify: onSendError
+  })
+  const { admitsSend } = rewind
+  const sendWithOutcome = useCallback(
+    (...input: Parameters<typeof sendWithOutcomeUngated>) =>
+      admitsSend() ? sendWithOutcomeUngated(...input) : Promise.resolve('rejected' as const),
+    [admitsSend, sendWithOutcomeUngated]
   )
   const queued = useMobileStructuredQueuedMessageControls({
     ...args,
@@ -299,6 +336,7 @@ export function useMobileStructuredAgentSession(
     respondQuestion,
     queued,
     commandRefusalCauses,
-    backgroundTasks
+    backgroundTasks,
+    rewind: rewind.surface
   }
 }

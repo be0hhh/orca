@@ -26,6 +26,7 @@ import { nativeChatWorkRunEntries } from '../../../../../src/shared/native-chat/
 import { nativeChatReasoningDisclosureKey } from '../../../../../src/shared/native-chat/transcript/native-chat-reasoning-row'
 import { MobileNativeChatTurnStatus } from './MobileNativeChatTurnStatus'
 import { MobileNativeChatNoticeRow } from './MobileNativeChatNoticeRow'
+import { nativeChatRowOffersRewind } from '../../../../../src/shared/native-chat/native-chat-rewind-eligibility'
 import { MobileNativeChatRowOverlaysContext } from './mobile-native-chat-row-overlays'
 import { MobileNativeChatUserMessageFold } from './MobileNativeChatUserMessageFold'
 import { MobileNativeChatMessageTime } from './MobileNativeChatMessageTime'
@@ -171,11 +172,20 @@ function MobileNativeChatMessageImpl({
       />
     ) : null
   // A ref keeps the memoized Markdown context stable as the message streams.
-  const pressedMessage = useRef(message)
+  const pressedMessage = useRef({ message, rewindable: false })
+  // The phone nests no subagent sections; the chat's eligible ids still exclude other chats' rows.
+  const rewindable = nativeChatRowOffersRewind(
+    message,
+    { depth: 0, turnKey },
+    Boolean(unsentNotice)
+  )
   useLayoutEffect(() => {
-    pressedMessage.current = message
-  }, [message])
-  const openActions = useCallback(() => openSheet(pressedMessage.current), [openSheet])
+    pressedMessage.current = { message, rewindable }
+  }, [message, rewindable])
+  const openActions = useCallback(
+    () => openSheet(pressedMessage.current.message, pressedMessage.current.rewindable),
+    [openSheet]
+  )
   const onLongPress = INLINE_TEXT_SELECTION ? undefined : openActions
   const renderVisual = useContext(MobileNativeChatVisualContext) ?? undefined
   const growingBlock =

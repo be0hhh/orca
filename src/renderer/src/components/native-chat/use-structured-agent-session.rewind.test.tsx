@@ -76,10 +76,7 @@ import { RuntimeRpcCallError } from '@/runtime/runtime-rpc-result'
 import { useStructuredAgentSession } from './use-structured-agent-session'
 import { readNativeChatDraftCache, writeNativeChatDraftCache } from './native-chat-draft-cache'
 import { setLocalRuntimeCapabilitiesForTests } from '@/runtime/local-runtime-capabilities'
-import {
-  nativeChatRewindReasonCopy,
-  nativeChatRewindReturnedUnknownCopy
-} from './native-chat-rewind-copy'
+import { nativeChatRewindReasonCopy, sayNativeChatRewind } from './native-chat-rewind-copy'
 
 import { useAppStore } from '@/store'
 import { forgetStructuredSessionSelection } from '@/lib/structured-agent-session-selection-controller'
@@ -268,7 +265,9 @@ describe('useStructuredAgentSession rewind RPC', () => {
     await act(() => view.result.current.rewind.request('user-1', async () => true))
     expect(readNativeChatDraftCache('unknown-scope')).toContain('Prompt')
     expect(onMessageReturned).toHaveBeenCalledOnce()
-    expect(mocks.toastError).toHaveBeenCalledExactlyOnceWith(nativeChatRewindReturnedUnknownCopy())
+    expect(mocks.toastError).toHaveBeenCalledExactlyOnceWith(
+      sayNativeChatRewind('returned-unknown')
+    )
     expect(view.result.current.error).toBeNull()
     view.result.current.send('Prompt', [])
     expect(mocks.outboxSend).toHaveBeenCalledOnce()

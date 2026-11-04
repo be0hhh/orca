@@ -175,6 +175,7 @@ export function MobileNativeChatOverlay({
     <MobileNativeChatRowOverlaysHost
       conversation={{ surfaceId: sendSurfaceId, sessionId }}
       imageSource={imageSource}
+      rewind={controller.nativeChatRewind}
     >
       <MobileQueuedMessageComposerContext.Provider value={queuedComposerContext}>
         <View style={styles.overlay}>

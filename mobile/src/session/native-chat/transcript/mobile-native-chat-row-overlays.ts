@@ -7,7 +7,8 @@ export type MobileNativeChatViewedImage = { uri: string; label: string }
 // Keep overlays above replaceable rows so echo/transcript swaps cannot close a selected image or actions sheet.
 export type MobileNativeChatRowOverlays = {
   openImage: (image: MobileNativeChatViewedImage) => void
-  openActions: (message: NativeChatMessage) => void
+  /** `rewindable`: the row is one the chat may rewind to, as desktop's `nativeChatRowOffersRewind`. */
+  openActions: (message: NativeChatMessage, rewindable?: boolean) => void
   /** Reads host image paths the phone cannot load itself. */
   imageSource?: MobileNativeChatImageSource
 }
