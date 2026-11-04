@@ -17,6 +17,7 @@ import { useMobileTranslation } from '../i18n/use-mobile-translation'
 import { styles } from './mobile-session-styles'
 import type { MobileSessionController } from './use-mobile-session-controller'
 import { useWorkspaceExecutionHost } from '../navigation/workspace-execution-host'
+import { useOpenMobileAccounts } from '../accounts/use-open-mobile-accounts'
 import { useHostProfile } from '../transport/use-host-profile'
 import { useHostDisplay } from '../transport/use-host-display'
 import { FileReader } from './MobileSessionFileReader'
@@ -117,6 +118,8 @@ export function MobileSessionActiveContent({
     () => (client ? { client, worktreeId } : undefined),
     [client, worktreeId]
   )
+  const openAccounts = useOpenMobileAccounts()
+  const openNativeChatAccounts = useCallback(() => openAccounts(hostId), [openAccounts, hostId])
   const navigateToSender = useCallback(
     (senderWorktreeId: string, paneKey: string) => {
       const execution = executionHost ? `&executionHost=${encodeURIComponent(executionHost)}` : ''
@@ -347,6 +350,8 @@ export function MobileSessionActiveContent({
                 keyboardInset={keyboardLift}
                 // A workspace routed to another server stops with that server, whose name the phone lacks.
                 hostName={executionHost === undefined && hostProfile ? hostTitle : null}
+                // Accounts open on the paired host, so a chat another server runs offers none.
+                onOpenAccounts={executionHost === undefined ? openNativeChatAccounts : undefined}
               />
             </MobileAgentMessageProvider>
           </MobileDictationMeterContext.Provider>
