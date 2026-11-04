@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import type { NativeChatMessage } from '../../../../../src/shared/native-chat/native-chat-types'
 import { triggerMediumImpact } from '../../../platform/haptics'
 import { MobileNativeChatImageViewer } from '../visual/MobileNativeChatImageViewer'
+import { MobileImageViewerActions } from '../visual/MobileImageViewerActions'
 import { MobileNativeChatMessageActionsSheet } from './MobileNativeChatMessageActionsSheet'
 import {
   MobileNativeChatRowOverlaysContext,
@@ -42,7 +43,11 @@ export function MobileNativeChatRowOverlaysHost({
   const opened = useMemo(() => {
     const close = () => setShown(null)
     return shown?.image ? (
-      <MobileNativeChatImageViewer {...shown.image} onClose={close} />
+      <MobileNativeChatImageViewer
+        {...shown.image}
+        actions={MobileImageViewerActions}
+        onClose={close}
+      />
     ) : shown?.actionsFor ? (
       <MobileNativeChatMessageActionsSheet message={shown.actionsFor} onClose={close} />
     ) : null

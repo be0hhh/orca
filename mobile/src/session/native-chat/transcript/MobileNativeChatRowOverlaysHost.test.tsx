@@ -27,6 +27,9 @@ vi.mock('../../../platform/haptics', () => ({ triggerMediumImpact: vi.fn() }))
 vi.mock('./MobileNativeChatMessageActionsSheet', () => ({
   MobileNativeChatMessageActionsSheet: 'MessageActionsSheet'
 }))
+vi.mock('../visual/MobileImageViewerActions', () => ({
+  MobileImageViewerActions: 'ImageViewerActions'
+}))
 
 let overlays: MobileNativeChatRowOverlays | null = null
 function Row(): null {
