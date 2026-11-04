@@ -46,6 +46,7 @@ import { useMobileStructuredSends } from './use-mobile-structured-sends'
 import { useMobileNativeChatQueueFollowUps as useQueueFollowUps } from './use-mobile-native-chat-queue-follow-ups'
 import { useMobileStructuredStopOffer } from './use-mobile-structured-stop-offer'
 import { useMobileStructuredTurnIndicator } from './use-mobile-structured-turn-indicator'
+import { useMobileStructuredInterruptedContinue } from './use-mobile-structured-interrupted-continue'
 
 const mobileStructuredTranscript = createStructuredQuestionProjection(
   projectStructuredAgentStartItem
@@ -259,6 +260,10 @@ export function useMobileStructuredAgentSession(
     ]
   )
 
+  const interruptedContinue = useMobileStructuredInterruptedContinue(
+    { client, sessionId, sessionKey, hostSupport, ...state },
+    isWorking || queueSendsNext
+  )
   const visualSource = useMemo<MobileNativeChatVisualSource | null>(
     () => (client && sessionId ? { client, sessionId } : null),
     [client, sessionId]
@@ -299,6 +304,7 @@ export function useMobileStructuredAgentSession(
     respondQuestion,
     queued,
     commandRefusalCauses,
-    backgroundTasks
+    backgroundTasks,
+    interruptedContinue
   }
 }

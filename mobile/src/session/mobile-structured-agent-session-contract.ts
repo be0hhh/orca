@@ -25,6 +25,7 @@ import type {
 } from './native-chat/use-mobile-native-chat-send-error'
 import type { MobileStructuredQueuedMessageControls } from './use-mobile-structured-queued-message-controls'
 import type { MobileStructuredBackgroundTasks } from './use-mobile-structured-background-tasks'
+import type { MobileStructuredInterruptedContinue } from './use-mobile-structured-interrupted-continue'
 
 export type StructuredMobileSession = ReturnType<typeof useMobileStructuredAgentOptions> &
   ReturnType<typeof useMobileStructuredAgentTurnTiming> & {
@@ -58,6 +59,7 @@ export type StructuredMobileSession = ReturnType<typeof useMobileStructuredAgent
     queued: MobileStructuredQueuedMessageControls
     commandRefusalCauses: MobileNativeChatCommandRefusalCauses
     backgroundTasks: MobileStructuredBackgroundTasks
+    interruptedContinue: MobileStructuredInterruptedContinue
     visualSource: MobileNativeChatVisualSource | null
     imagePreviewsByMessageId: Record<string, string[]>
   }
