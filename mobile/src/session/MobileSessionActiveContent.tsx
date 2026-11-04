@@ -6,6 +6,7 @@ import { saveTerminalTextScale } from '../storage/preferences'
 import { MobileBrowserPane } from '../browser/MobileBrowserPane'
 import { TerminalPaneView } from './TerminalPaneView'
 import { MobileNativeChatOverlay } from './native-chat/MobileNativeChatOverlay'
+import { mobileNativeChatHostOutage } from './native-chat/mobile-native-chat-host-outage'
 import { MobileAgentMessageProvider } from './native-chat/transcript/MobileAgentMessageProvider'
 import { useMobileAgentMessageNavigation } from './use-mobile-agent-message-navigation'
 import { MobileNativeChatDictationPreviewContext } from './native-chat/composer/mobile-native-chat-dictation-preview-context'
@@ -113,6 +114,19 @@ export function MobileSessionActiveContent({
   } = controller
   const hostProfile = useHostProfile(hostId)
   const hostTitle = useHostDisplay(hostProfile).title
+  const nativeChatHostOutage =
+    nativeChatOverlayInputLockReason === 'disconnected'
+      ? mobileNativeChatHostOutage(
+          {
+            pairedHostState: controller.pairedHostState,
+            pairedVerdict: controller.connectionVerdict,
+            hostName: hostTitle,
+            canReconnect: controller.showConnectionRetry,
+            server: controller.workspaceServer
+          },
+          t
+        )
+      : null
   const nativeChatImageSource = useMemo(
     () => (client ? { client, worktreeId } : undefined),
     [client, worktreeId]
@@ -347,6 +361,12 @@ export function MobileSessionActiveContent({
                 keyboardInset={keyboardLift}
                 // A workspace routed to another server stops with that server, whose name the phone lacks.
                 hostName={executionHost === undefined && hostProfile ? hostTitle : null}
+                hostOutage={nativeChatHostOutage}
+                onReconnect={() => {
+                  if (hostId && controller.forceReconnectHost) {
+                    void controller.forceReconnectHost(hostId)
+                  }
+                }}
                 onRunInTerminal={(command) =>
                   void controller.handleCreateTerminal(undefined, {
                     startupCommand: command,

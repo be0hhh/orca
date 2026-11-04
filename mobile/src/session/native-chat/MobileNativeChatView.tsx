@@ -17,6 +17,8 @@ import type {
 import type { NativeChatTurnJournal } from '../../../../src/shared/native-chat/transcript/native-chat-turn-membership'
 import type { NativeChatResolvedPrompt } from '../../../../src/shared/native-chat/native-chat-resolution-receipt'
 import { useMobileTranslation } from '../../i18n/use-mobile-translation'
+import type { MobileNativeChatHostOutage } from './mobile-native-chat-host-outage'
+import { MobileNativeChatInputLockStatus } from './composer/MobileNativeChatInputLockStatus'
 import { useMobileColorScheme } from '../../theme/use-mobile-color-scheme'
 import { styles } from './mobile-native-chat-view-styles'
 import { MobileNativeChatEmptyStateView } from '../MobileNativeChatEmptyStateView'
@@ -106,6 +108,9 @@ type ChatViewProps = MobileNativeChatSendProps &
     onRemoveAttachment?: (id: string) => void
     isAttaching?: boolean
     inputLockReason?: MobileNativeChatInputLockReason | null
+    /** Why a `disconnected` lock holds: which host is out, and whether Reconnect can help. */
+    hostOutage?: MobileNativeChatHostOutage | null
+    onReconnect?: () => void
     // Report send failures here only while mounted; the route uses a toast otherwise.
     sendErrorMessage?: string | null
     onClearSendError?: () => void
@@ -166,6 +171,8 @@ export function MobileNativeChatView({
   onMicPressIn,
   onMicPressOut,
   inputLockReason,
+  hostOutage = null,
+  onReconnect,
   sendErrorMessage,
   onClearSendError,
   filePaths,
@@ -357,12 +364,12 @@ export function MobileNativeChatView({
         {...{ permission, onRespondPermission, question, onAnswerQuestion, onCollapsePrompt }}
         collapsedPrompt={collapsedPrompt}
       />
-      <Text
-        style={lockReason === 'waiting' ? styles.inputLockStatus : undefined}
-        accessibilityLiveRegion="polite"
-      >
-        {lockReason === 'waiting' ? composerPlaceholder : null}
-      </Text>
+      <MobileNativeChatInputLockStatus
+        lockReason={lockReason}
+        waitingText={composerPlaceholder}
+        hostOutage={hostOutage}
+        onReconnect={onReconnect}
+      />
       {sendErrorMessage ? (
         // This banner is the only channel for a send failure — announce it.
         <View

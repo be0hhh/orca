@@ -551,6 +551,13 @@
       "byteSize": "{{size}} bayt",
       "saveUpdate": "Kaydetme özelliği bir telefon güncellemesiyle kullanılabilecek.",
       "fullCopySaveUpdate": "Bu ek için Tümünü Kopyala ve Kaydet özellikleri bir telefon güncellemesiyle kullanılabilecek."
+    },
+    "hostOutage": {
+      "offline": "{{hostName}} çevrimdışı",
+      "reconnecting": "{{hostName}} yeniden bağlanıyor…",
+      "stopped": "{{hostName}} durduruldu. Bilgisayarınızda başlatın.",
+      "server": "Sunucu",
+      "reconnect": "Yeniden bağlan"
     }
   },
   "common": {

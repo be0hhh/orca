@@ -21,6 +21,8 @@ export function useWorkspaceServer(args: {
     client: RpcClient | null
     state: ConnectionState
     name: string | null
+    /** The desktop reports the server's WSL distro stopped; only the desktop can start it. */
+    stopped: boolean
     gates: HostStatusGates
     desktopCapabilities: readonly string[]
   } | null
@@ -44,6 +46,7 @@ export function useWorkspaceServer(args: {
             client: serverClient,
             state,
             name: selectedHost?.label ?? null,
+            stopped: selectedHost?.stoppedOnDesktop === true,
             gates,
             desktopCapabilities
           }

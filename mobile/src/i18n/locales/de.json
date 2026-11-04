@@ -551,6 +551,13 @@
       "byteSize": "{{size}} Byte",
       "saveUpdate": "Speichern wird mit einem Smartphone-Update verfügbar sein.",
       "fullCopySaveUpdate": "„Vollständig kopieren“ und Speichern werden für diesen Anhang mit einem Smartphone-Update verfügbar sein."
+    },
+    "hostOutage": {
+      "offline": "{{hostName}} ist offline",
+      "reconnecting": "{{hostName}} verbindet sich erneut…",
+      "stopped": "{{hostName}} ist gestoppt. Starte es auf deinem Computer.",
+      "server": "Der Server",
+      "reconnect": "Neu verbinden"
     }
   },
   "common": {

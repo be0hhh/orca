@@ -547,6 +547,13 @@
       "byteSize": "{{size}} 位元組",
       "saveUpdate": "儲存功能將在手機更新中提供。",
       "fullCopySaveUpdate": "完整複製和儲存此附件的功能將在手機更新中提供。"
+    },
+    "hostOutage": {
+      "offline": "{{hostName}} 已離線",
+      "reconnecting": "{{hostName}} 正在重新連線…",
+      "stopped": "{{hostName}} 已停止。請在你的電腦上啟動它。",
+      "server": "伺服器",
+      "reconnect": "重新連線"
     }
   },
   "common": {

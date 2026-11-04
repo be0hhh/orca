@@ -3157,6 +3157,13 @@
       "updateFromWorker": "Update from worker",
       "messageFrom": "Message from",
       "showMore": "Show more"
+    },
+    "hostOutage": {
+      "offline": "{{hostName}} is offline",
+      "reconnecting": "{{hostName}} is reconnecting…",
+      "stopped": "{{hostName}} is stopped. Start it on your computer.",
+      "server": "The server",
+      "reconnect": "Reconnect"
     }
   },
   "sourceControl": {

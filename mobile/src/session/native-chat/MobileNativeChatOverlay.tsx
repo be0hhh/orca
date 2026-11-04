@@ -20,6 +20,7 @@ import { nativeChatAskRequiresTerminal } from '../../../../src/shared/native-cha
 import { tuiAgentDisplayName } from '../../../../src/shared/agent-launch/catalog/tui-agent-display-names'
 import { MobileNativeChatNoticeContext } from '../mobile-native-chat-notice-context'
 import type { MobileNativeChatImageSource } from './visual/mobile-native-chat-image-preview'
+import type { MobileNativeChatHostOutage } from './mobile-native-chat-host-outage'
 
 type Props = {
   controller: MobileNativeChatController
@@ -47,6 +48,8 @@ type Props = {
   hostName: string | null
   /** Opens a host terminal tab in this chat's workspace running `command`. */
   onRunInTerminal?: (command: string) => void
+  hostOutage?: MobileNativeChatHostOutage | null
+  onReconnect?: () => void
 }
 
 // Keep the terminal subscription and streaming gate above view toggles; the chat list unmounts below this boundary.
@@ -72,7 +75,9 @@ export function MobileNativeChatOverlay({
   getSendCompletionGeneration,
   keyboardInset,
   hostName,
-  onRunInTerminal
+  onRunInTerminal,
+  hostOutage = null,
+  onReconnect
 }: Props): React.JSX.Element | null {
   const session = controller.nativeChatSession
   const agent = controller.nativeChatAgent ?? ''
@@ -271,6 +276,8 @@ export function MobileNativeChatOverlay({
                     onMicPressIn={onMicPressIn}
                     onMicPressOut={onMicPressOut}
                     inputLockReason={inputLockReason}
+                    hostOutage={hostOutage}
+                    onReconnect={onReconnect}
                     sendErrorMessage={sendErrorMessage}
                     onClearSendError={onClearSendError}
                     filePaths={controller.nativeChatFilePaths}
