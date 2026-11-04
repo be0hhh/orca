@@ -20,6 +20,7 @@ import {
   readWholeAgentSessionFailureFact
 } from '../../../../../src/shared/agent-session/failures/agent-session-failure'
 import { agentSessionFailureSentence } from '../../../../../src/shared/agent-session/failures/agent-session-failure-words'
+import { agentSessionRemoteSignInCommand } from '../../../../../src/shared/agent-session/lifecycle/agent-session-sign-in'
 import { nativeChatOrcaStopRowText } from '../../../../../src/shared/native-chat/native-chat-orca-stop-words'
 import {
   MobileNativeChatNoticeContext,
@@ -146,9 +147,13 @@ export function MobileNativeChatNoticeRow({
   }
   const look = nativeChatNoticeLook(notice)
   const lineText = noticeLineText(notice, names, t)
-  const failureDetail = agentSessionFailureDetailText(
-    readWholeAgentSessionFailureFact(notice.failure)
-  )
+  const failure = readWholeAgentSessionFailureFact(notice.failure)
+  const failureDetail = agentSessionFailureDetailText(failure)
+  const signInCommand =
+    failure?.kind === 'notSignedIn'
+      ? agentSessionRemoteSignInCommand(names.agentName, failure.account)
+      : null
+  const runInTerminal = names.onRunInTerminal
   const detail = failureDetail?.trim() !== lineText.trim() ? failureDetail : undefined
   const diagnosticText = look.kind === 'settled-permission' ? notice.text : detail
   const payload = notice.providerFrame?.payload
@@ -278,6 +283,21 @@ export function MobileNativeChatNoticeRow({
           <Text selectable={INLINE_TEXT_SELECTION} style={textStyle}>
             {lineText}
           </Text>
+          {signInCommand && runInTerminal ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityHint={t(
+                'chat.notice.signInHint',
+                'Opens a terminal on the computer running this chat'
+              )}
+              onPress={() => runInTerminal(signInCommand)}
+              style={({ pressed }) => [styles.action, pressed && pressedStyle]}
+            >
+              <Text style={[styles.actionLabel, scaledType(typography.metaSize, fontScale)]}>
+                {t('chat.notice.signIn', 'Sign in')}
+              </Text>
+            </Pressable>
+          ) : null}
           {detail || payload ? (
             <View>
               <NoticeDisclosureSummary
@@ -369,5 +389,19 @@ const styles = themedStyleSheet(() => ({
   },
   toneText: {
     flex: 1
+  },
+  action: {
+    alignSelf: 'flex-start',
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radii.control,
+    backgroundColor: colors.bgRaised,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.borderSubtle
+  },
+  actionLabel: {
+    color: colors.textSecondary,
+    fontWeight: '600'
   }
 }))

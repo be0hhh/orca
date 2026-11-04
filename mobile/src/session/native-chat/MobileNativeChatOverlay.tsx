@@ -1,5 +1,5 @@
 import { MobileQueuedMessageComposerContext } from '../mobile-queued-message-composer-context'
-import { useCallback, useLayoutEffect, useMemo } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef } from 'react'
 import { StyleSheet, View } from 'react-native'
 import { MobileNativeChatView, type MobileNativeChatInputLockReason } from './MobileNativeChatView'
 import { foldMobileNativeChatMessages } from './mobile-native-chat-render-data'
@@ -45,6 +45,8 @@ type Props = {
   keyboardInset: number
   /** The Orca host that runs this chat, named for notices; null when unnamed. */
   hostName: string | null
+  /** Opens a host terminal tab in this chat's workspace running `command`. */
+  onRunInTerminal?: (command: string) => void
 }
 
 // Keep the terminal subscription and streaming gate above view toggles; the chat list unmounts below this boundary.
@@ -69,7 +71,8 @@ export function MobileNativeChatOverlay({
   sessionId,
   getSendCompletionGeneration,
   keyboardInset,
-  hostName
+  hostName,
+  onRunInTerminal
 }: Props): React.JSX.Element | null {
   const session = controller.nativeChatSession
   const agent = controller.nativeChatAgent ?? ''
@@ -164,9 +167,20 @@ export function MobileNativeChatOverlay({
       onMicPressOut
     ]
   )
+  // Why a ref: rows read this through context, and the route's callback changes every render.
+  const runInTerminalRef = useRef(onRunInTerminal)
+  useLayoutEffect(() => {
+    runInTerminalRef.current = onRunInTerminal
+  }, [onRunInTerminal])
+  const runInTerminal = useCallback((command: string) => runInTerminalRef.current?.(command), [])
+  const canRunInTerminal = onRunInTerminal !== undefined
   const noticeNames = useMemo(
-    () => ({ hostName, ...(agent ? { agentName: tuiAgentDisplayName(agent) ?? agent } : {}) }),
-    [hostName, agent]
+    () => ({
+      hostName,
+      ...(agent ? { agentName: tuiAgentDisplayName(agent) ?? agent } : {}),
+      ...(canRunInTerminal ? { onRunInTerminal: runInTerminal } : {})
+    }),
+    [hostName, agent, canRunInTerminal, runInTerminal]
   )
   if (!controller.showNativeChat) {
     return null
