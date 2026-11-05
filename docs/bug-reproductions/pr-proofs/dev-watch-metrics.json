@@ -1,0 +1,25 @@
+{
+  "scope": "native Windows watcher lifecycle, not Electron UI",
+  "rows": [
+    [
+      "Healthy C-folder revision after 130 s",
+      "342",
+      "1"
+    ],
+    [
+      "Reported C-folder edits while idle",
+      "0",
+      "0"
+    ],
+    [
+      "Deliberate C asset write observed",
+      "No",
+      "Yes"
+    ],
+    [
+      "Persistent UNC failure retry",
+      "About every 370 ms",
+      "Existing 60 s maintenance"
+    ]
+  ]
+}
