@@ -16,5 +16,9 @@
   "harnessSha256": "68656c122d4e35fcebde049387aaa1c8d3b59c77188deae9f8df11ce65586337",
   "scope": "Native local sparse files through actual loader, RangedFileDocuments, RuntimeRangeDocument, custom-editor bridge, injected shell SDK and actual Binary Tools UI/Reader.",
   "boundary": "In-process window.api.fs adapter replaces OS IPC scheduling; no Electron browser process, remote RPC pairing or live app acceptance is claimed.",
-  "payloadMetric": "Counts successful readRange response bytes; excludes bounded classification probes and failed/cancelled requests."
+  "payloadMetric": "Counts successful readRange response bytes; excludes bounded classification probes and failed/cancelled requests.",
+  "combinedHostPatch": {
+    "base": "4337392b75bf70902227295a3f0c85b4040adb28",
+    "sha256": "828b43deba66d5cb4a9403d10d7a8c46da915070d679ca29bf40591c3af3512a"
+  }
 }
