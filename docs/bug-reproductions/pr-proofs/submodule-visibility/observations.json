@@ -1,0 +1,63 @@
+{
+  "base": "39274933719012877bc86d3bcd2d49c743904aef",
+  "fixtureSHA256": "ac92fbe7753f790e4cc7b282dcc7e1d66b83505b559b811f58df156009ca6b60",
+  "execution": "Linux headless Chromium component fixture, not installed Electron",
+  "results": [
+    {
+      "id": "right-sidebar/source-control/listing/submodule-rows:afterFolders",
+      "theme": "dark",
+      "path": "right-sidebar__source-control__listing__submodule-rows--afterFolders.dark.png",
+      "ms": 341,
+      "pageErrors": []
+    },
+    {
+      "id": "right-sidebar/source-control/listing/submodule-rows:afterFolders",
+      "theme": "light",
+      "path": "right-sidebar__source-control__listing__submodule-rows--afterFolders.light.png",
+      "ms": 125,
+      "pageErrors": []
+    },
+    {
+      "id": "right-sidebar/source-control/listing/submodule-rows:beforeFlatChildren",
+      "theme": "dark",
+      "path": "right-sidebar__source-control__listing__submodule-rows--beforeFlatChildren.dark.png",
+      "ms": 144,
+      "pageErrors": []
+    },
+    {
+      "id": "right-sidebar/source-control/listing/submodule-rows:beforeFlatChildren",
+      "theme": "light",
+      "path": "right-sidebar__source-control__listing__submodule-rows--beforeFlatChildren.light.png",
+      "ms": 106,
+      "pageErrors": []
+    },
+    {
+      "id": "right-sidebar/source-control/listing/submodule-rows:retainedError",
+      "theme": "dark",
+      "path": "right-sidebar__source-control__listing__submodule-rows--retainedError.dark.png",
+      "ms": 125,
+      "pageErrors": []
+    },
+    {
+      "id": "right-sidebar/source-control/listing/submodule-rows:retainedError",
+      "theme": "light",
+      "path": "right-sidebar__source-control__listing__submodule-rows--retainedError.light.png",
+      "ms": 134,
+      "pageErrors": []
+    },
+    {
+      "id": "right-sidebar/source-control/listing/submodule-rows:retryPending",
+      "theme": "dark",
+      "path": "right-sidebar__source-control__listing__submodule-rows--retryPending.dark.png",
+      "ms": 94,
+      "pageErrors": []
+    },
+    {
+      "id": "right-sidebar/source-control/listing/submodule-rows:retryPending",
+      "theme": "light",
+      "path": "right-sidebar__source-control__listing__submodule-rows--retryPending.light.png",
+      "ms": 110,
+      "pageErrors": []
+    }
+  ]
+}
