@@ -1,0 +1,70 @@
+{
+  "generatedAt": "2026-11-05T01:41:59.049Z",
+  "observations": [
+    {
+      "kind": "extensionless-ELF",
+      "fileBytes": 68157440,
+      "initialInspectionRangePayloadBytes": 196608,
+      "rangePayloadBytes": 68550656,
+      "rangeReadRequests": 267,
+      "maximumRequestedRangeBytes": 262144,
+      "maximumInFlightRangeReads": 2,
+      "cancellationRequests": 1,
+      "oldFullReads": 0,
+      "publicVersionAfterReload": 2,
+      "initialSummary": "ELF \u00b7 x86-64 \u00b7 64-bit \u00b7 65.00 MiB on disk \u00b7 65.00 MiB image",
+      "reloadedSummary": "ELF \u00b7 AArch64 \u00b7 64-bit \u00b7 65.00 MiB on disk \u00b7 65.00 MiB image",
+      "reloadedEOFByte": "CE"
+    },
+    {
+      "kind": "extensionless-ELF",
+      "fileBytes": 1073741824,
+      "initialInspectionRangePayloadBytes": 196608,
+      "rangePayloadBytes": 393216,
+      "rangeReadRequests": 8,
+      "maximumRequestedRangeBytes": 262144,
+      "maximumInFlightRangeReads": 2,
+      "cancellationRequests": 3,
+      "oldFullReads": 0,
+      "publicVersionAfterReload": 2,
+      "initialSummary": "ELF \u00b7 x86-64 \u00b7 64-bit \u00b7 1.00 GiB on disk \u00b7 1.00 GiB image",
+      "reloadedSummary": "ELF \u00b7 AArch64 \u00b7 64-bit \u00b7 1.00 GiB on disk \u00b7 1.00 GiB image",
+      "reloadedEOFByte": "CE"
+    },
+    {
+      "kind": "empty-New-inspection",
+      "fileBytes": 0,
+      "rangePayloadBytes": 0,
+      "rangeReadRequests": 0,
+      "maximumRequestedRangeBytes": 0,
+      "maximumInFlightRangeReads": 0,
+      "cancellationRequests": 0,
+      "oldFullReads": 0,
+      "pickerEnabled": true
+    },
+    {
+      "kind": "extensionless-text-default",
+      "fileBytes": 28,
+      "rangeProbeOpens": 1,
+      "closedRangeProbes": 1,
+      "rangePayloadBytes": 0,
+      "rangeReadRequests": 0,
+      "ordinarySourceReads": 1,
+      "sourceText": "Plain text opens in Source.\n",
+      "isBinary": false,
+      "hasRangePlaceholder": false
+    },
+    {
+      "kind": "extensionless-text-explicit-Source",
+      "fileBytes": 28,
+      "rangeProbeOpens": 0,
+      "closedRangeProbes": 0,
+      "rangePayloadBytes": 0,
+      "rangeReadRequests": 0,
+      "ordinarySourceReads": 1,
+      "sourceText": "Plain text opens in Source.\n",
+      "isBinary": false,
+      "hasRangePlaceholder": false
+    }
+  ]
+}

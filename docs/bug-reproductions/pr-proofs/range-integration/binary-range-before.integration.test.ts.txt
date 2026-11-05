@@ -1,0 +1,17 @@
+import { mkdtemp,open,rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { expect,it } from 'vitest'
+import { readLocalFileContent } from './filesystem-file-content-inspection'
+it('shows current local admission for extensionless65MiB and1GiB binaries', async()=>{
+ const folder=await mkdtemp(join(tmpdir(),'orca-range-before-'))
+ try {
+  for (const [size,message] of [[68157440,'File too large: 65.0MB exceeds 50MB limit'],[1073741824,'File too large: 1024.0MB exceeds 50MB limit']] as const) {
+   const path=join(folder,'example-tool')
+   const file=await open(path,'w+')
+   try {await file.truncate(size);await file.write(Buffer.from([127,69,76,70,2,1,1,0]),0,8,0)} finally {await file.close()}
+   await expect(readLocalFileContent(path)).rejects.toThrow(message)
+   console.log(JSON.stringify({byteLength:size,result:message}))
+  }
+ } finally {await rm(folder,{recursive:true,force:true})}
+})

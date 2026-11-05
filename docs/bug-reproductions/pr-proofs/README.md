@@ -9,3 +9,7 @@ The Codex images are headless component fixtures: identical worker roles before 
 ## Binary fallback consent
 
 `binary-consent-before.{dark,light}.png` and `binary-consent-after.{dark,light}.png` render the existing install-consent component with the same `.bin` editor/publisher and only the new fallback flag differing. They show the broader file-reading disclosure, not an installed-app session. Reproduce from the fallback feature branch with `pnpm fixtures:shot plugins/review/PluginInstallConsent:extensionOnly plugins/review/PluginInstallConsent:binaryFallback --theme both`; all four headless shots completed without page errors.
+
+## Ranged document integration
+
+`range-before-after.png` renders the executed native/DOM integration observations as a table. It is not an Electron UI recording. The portable harness, source digests, sanitized successful log and observed metrics are in `range-integration/`. The complete marker search is 65 MiB; 1 GiB covers paged header/EOF inspection, cancellation, mutation and explicit Reload. The binary cases never call the legacy whole-file reader.

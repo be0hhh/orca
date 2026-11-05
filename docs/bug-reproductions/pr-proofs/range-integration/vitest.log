@@ -1,0 +1,12 @@
+(node:2817306) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///path/to/host/src/shared/orcad-artifacts.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /path/to/host/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+ RUN  v5.0.5 /path/to/host
+
+
+ Test Files  1 passed (1)
+      Tests  5 passed (5)
+   Start at  04:41:55
+   Duration  3.62s (transform 43%, tests 32%, import 22%, environment 2%)

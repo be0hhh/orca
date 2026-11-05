@@ -1,0 +1,285 @@
+// @vitest-environment happy-dom
+// Copy only into a disposable combined-host clone at:
+// src/renderer/src/components/editor/binary-tools-host-consumer.integration.test.tsx
+// Uses actual loader, native ranged-file owner, runtime, bridge, shell SDK and consumer UI/core.
+import { mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { act } from 'react'
+import { createRoot } from 'react-dom/client'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { RangedFileDocuments } from '../../../../main/ipc/filesystem/ranged-file-documents'
+import { readLocalFileContent } from '../../../../main/ipc/filesystem/filesystem-file-content-inspection'
+import { parsePluginManifest } from '../../../../shared/plugins/manifest/plugin-manifest'
+import { mountShell } from '../../../../shared/plugins/frames/plugin-frame-shell-mount.test-fixture'
+import { createCustomEditorHost } from './plugin-custom-editor-host'
+import { useEditorPanelFileContentLoader } from './useEditorPanelFileContentLoader'
+import type { FileContent, EditorPanelFileContentLoader } from './editor-panel-content-types'
+import type { PluginHostListEntry } from '../../../../shared/plugins/plugin-list-entry'
+import { useAppStore } from '@/store'
+import { usePluginPanelsStore } from '@/store/plugin-panels'
+import { useCustomEditorViewStore, collectActivePluginCustomEditors, customEditorsForFile, eligibleCustomEditorsForContent, resolveCustomEditorChoice } from '@/store/plugin-custom-editors'
+
+// Negative sentinel only: the exercised source is the real RangedFileDocuments, never fake bytes.
+const oldReader = vi.hoisted(() => {
+  const forbid = (_args: { filePath: string }): Promise<{ content: string; isBinary: boolean }> => { throw new Error('Legacy whole-file reader must not run') }
+  return { forbid, fullRead: vi.fn(forbid) }
+})
+vi.mock('@/runtime/runtime-file-read-client', async (original) => ({
+  ...(await original<typeof import('@/runtime/runtime-file-read-client')>()),
+  readRuntimeFileContent: oldReader.fullRead
+}))
+const pluginSource = process.env.BINARY_TOOLS_SOURCE
+if (!pluginSource?.trim()) throw new Error('Set BINARY_TOOLS_SOURCE to the Binary Tools checkout directory')
+const PLUGIN = resolve(pluginSource)
+const [binaryCore, byteSources] = await Promise.all([
+  import(/* @vite-ignore */ pathToFileURL(join(PLUGIN, 'editor/binary-core.mjs')).href),
+  import(/* @vite-ignore */ pathToFileURL(join(PLUGIN, 'editor/byte-source.mjs')).href)
+])
+const parsedPluginManifest = parsePluginManifest(JSON.parse(await readFile(join(PLUGIN, 'orca-plugin.json'), 'utf8')))
+if (!parsedPluginManifest.ok) throw new Error(parsedPluginManifest.error)
+const pluginManifest = parsedPluginManifest.manifest
+const pluginHtml = await readFile(join(PLUGIN, 'editor/index.html'), 'utf8')
+const pluginUi = (await readFile(join(PLUGIN, 'editor/ui.mjs'), 'utf8'))
+  .replace(/^import \{[^}]+\} from "\.\/binary-core\.mjs";/m, 'const { parseBinary, searchBytes, scanStrings } = window.integrationBinaryCore;')
+  .replace(/^import \{[^}]+\} from "\.\/byte-source\.mjs";/m, 'const { bytesSource, fileSource, rangeSource, pagedSource, subSource, MAX_FILE_BYTES } = window.integrationByteSources;')
+const observations: Record<string, unknown>[] = []
+const originalApi = window.api
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+async function until(test: () => boolean, detail: string, timeout = 15000): Promise<void> {
+  const deadline = Date.now() + timeout
+  while (!test()) {
+    if (Date.now() >= deadline) throw new Error(`Timed out: ${detail}`)
+    await tick()
+  }
+}
+function installConsumer(): void {
+  const editor = pluginManifest.contributes.customEditors.find((entry: { id: string }) => entry.id === 'binary-inspector')
+  if (!editor) throw new Error('The Binary Tools manifest does not register binary-inspector')
+  expect(editor.documentAccess).toBe('ranges')
+  expect(editor.binaryFallback).toBe(true)
+  const plugin: PluginHostListEntry = {
+    pluginKey: 'integration.binary-tools', consentFingerprint: null, name: pluginManifest.name,
+    version: pluginManifest.version, publisher: 'integration', status: 'idle', needsReconsent: false,
+    isDev: false, official: false, bundled: false, capabilities: [], panels: [], commands: [],
+    hasWorker: false, restarts: 0, customEditors: [{ ...editor, priority: editor.priority ?? 'default' }]
+  }
+  usePluginPanelsStore.setState({ plugins: [plugin] })
+}
+function makeLoader() {
+  const root = createRoot(document.createElement('div'))
+  let load: EditorPanelFileContentLoader | undefined
+  let contents: Record<string, FileContent> = {}
+  function Loader(): null {
+    load = useEditorPanelFileContentLoader({
+      fileLoadRetryAttemptsRef: { current: {} }, fileReadGenerationCounterRef: { current: 0 },
+      fileReadGenerationRef: { current: {} }, openFilesRef: { current: [] }, outstandingFileReadsRef: { current: {} },
+      fileContentsRef: { get current() { return contents } },
+      setFileContents: (next) => { contents = typeof next === 'function' ? next(contents) : next }
+    })
+    return null
+  }
+  act(() => root.render(<Loader />))
+  return {
+    load: (path: string) => act(async () => { await load!(path, 'document') }),
+    content: () => contents.document,
+    dispose() { for (const value of Object.values(contents)) value.rangeDocument?.dispose(); act(() => root.unmount()) }
+  }
+}
+async function sparseElf(path: string, size: number): Promise<void> {
+  const file = await open(path, 'w+')
+  try {
+    await file.truncate(size)
+    if (!size) return
+    const header = new Uint8Array(120), view = new DataView(header.buffer)
+    header.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1])
+    view.setUint16(16, 2, true); view.setUint16(18, 62, true)
+    view.setBigUint64(32, 64n, true); view.setUint16(52, 64, true)
+    view.setUint16(54, 56, true); view.setUint16(56, 1, true)
+    view.setUint32(64, 1, true); view.setUint32(68, 5, true)
+    view.setBigUint64(80, 0x400000n, true)
+    view.setBigUint64(96, BigInt(size), true); view.setBigUint64(104, BigInt(size + 4096), true)
+    await file.write(header, 0, header.length, 0)
+    await file.write(new Uint8Array([0xde, 0xad, 0xbe, 0xef]), 0, 4, size - 4)
+  } finally { await file.close() }
+}
+function bindNativeApi(documents: RangedFileDocuments, owner: string) {
+  const stats = { opens: 0, closes: 0, openedIds: [] as string[], reads: 0, bytes: 0, maximumLength: 0, active: 0, maximumActive: 0, cancels: 0 }
+  Object.assign(window, { api: { ...originalApi, fs: {
+    ...originalApi?.fs,
+    async rangeDocumentOpen({ filePath }: { filePath: string }) {
+      stats.opens++; const descriptor = await documents.open(owner, async () => filePath)
+      stats.openedIds.push(descriptor.id); return descriptor
+    },
+    async rangeDocumentRead(params: Parameters<RangedFileDocuments['read']>[1]) {
+      stats.reads++; stats.maximumLength = Math.max(stats.maximumLength, params.length)
+      stats.maximumActive = Math.max(stats.maximumActive, ++stats.active)
+      try { const reply = await documents.read(owner, params); stats.bytes += reply.bytesRead; return reply }
+      finally { stats.active-- }
+    },
+    rangeDocumentStatus: ({ id }: { id: string }) => documents.status(owner, id),
+    rangeDocumentReload: ({ id }: { id: string }) => documents.reload(owner, id),
+    rangeDocumentClose: ({ id }: { id: string }) => { stats.closes++; return documents.close(owner, id) },
+    async rangeDocumentCancel({ id, requestToken }: { id: string; requestToken: string }) { stats.cancels++; documents.cancel(owner, id, requestToken) }
+  } } })
+  return stats
+}
+function mountConsumer(content: FileContent) {
+  if (!content.rangeDocument) throw new Error('Actual loader did not acquire ranged source')
+  document.body.innerHTML = pluginHtml.match(/<body>([\s\S]*?)<\/body>/)![1].replace(/<script\b[^>]*src="\.\/ui\.mjs"[^>]*>\s*<\/script>/, '')
+  const shell = mountShell('editor')
+  const frameWindow = { postMessage: (message: unknown) => shell.fromHost(message) }
+  const host = createCustomEditorHost({
+    getFrameWindow: () => frameWindow,
+    getDocument: () => ({ text: '', readOnly: true }),
+    getBinaryDocument: () => { throw new Error('Legacy full-buffer host path must not run') },
+    onEdit: () => { throw new Error('Inspection must never edit') },
+    rangeDocument: { source: content.rangeDocument, fileType: 'bin' }
+  })
+  shell.parent.postMessage.mockImplementation((message) => { host.channel.claim(message) })
+  host.channel.onReady()
+  Object.assign(window, { integrationBinaryCore: binaryCore, integrationByteSources: byteSources })
+  window.eval(`(function () { ${pluginUi}\n})()`)
+  const $ = (id: string) => document.getElementById(id)!
+  return {
+    shell, host, $,
+    async end() { const viewport = $('hexViewport'); Object.defineProperty(viewport, 'clientHeight', { value: 320, configurable: true }); viewport.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', ctrlKey: true })); await tick() },
+    close() { window.dispatchEvent(new Event('pagehide')); host.reset() }
+  }
+}
+beforeEach(() => {
+  useAppStore.setState(useAppStore.getInitialState(), true)
+  useCustomEditorViewStore.setState({ choices: {} })
+  oldReader.fullRead.mockReset(); oldReader.fullRead.mockImplementation(oldReader.forbid)
+  installConsumer()
+})
+afterEach(async () => {
+  usePluginPanelsStore.setState({ plugins: [] }); Object.assign(window, { api: originalApi }); document.body.innerHTML = ''
+  await writeFile('/tmp/orca-binary-integration-evidence.json', JSON.stringify({ generatedAt: new Date().toISOString(), observations }, null, 2) + '\n')
+})
+
+it.each([65 * 1024 * 1024, 1024 * 1024 * 1024])('actual extensionless ELF %i-byte host+consumer path, bounded EOF, cancel, invalidation and explicit reload', async (size) => {
+  const folder = await mkdtemp(join(tmpdir(), 'binary-range-integration-')), path = join(folder, 'sample')
+  const documents = new RangedFileDocuments(), owner = 'integration-frame'
+  await sparseElf(path, size)
+  const stats = bindNativeApi(documents, owner), loader = makeLoader()
+  let app: ReturnType<typeof mountConsumer> | undefined
+  try {
+    await loader.load(path)
+    const content = loader.content()
+    expect(content?.loadError).toBeUndefined(); expect(content?.rangeDocument).toBeDefined()
+    expect(content?.size).toBe(size); expect(content?.isBinary).toBe(true); expect(content?.content).toBe('')
+    const candidates = customEditorsForFile(path, collectActivePluginCustomEditors(usePluginPanelsStore.getState().plugins))
+    const eligible = eligibleCustomEditorsForContent({ filePath: path, mode: 'edit' }, content, candidates)
+    expect(resolveCustomEditorChoice(eligible, undefined)?.id).toBe('binary-inspector')
+    app = mountConsumer(content)
+    await until(() => /ELF.*x86-64/.test(app!.$('fileSummary').textContent ?? ''), 'actual ELF Reader metadata')
+    await app.end()
+    await until(() => document.getElementById(`byte-${size - 1}`)?.textContent === 'EF', 'virtual EOF page')
+    await until(() => app!.$('inspector').textContent?.includes(`0x${(size - 1).toString(16).toUpperCase().padStart(8, '0')}`) === true, 'EOF data inspector')
+    await until(() => stats.active === 0, 'initial visible reads drain')
+    expect(stats.bytes).toBeLessThan(1024 * 1024)
+    const initialPayloadBytes = stats.bytes, initialSummary = app.$('fileSummary').textContent
+
+    const session = await app.shell.orca.document!.rangeSession(), abort = new AbortController(), previousVersion = session.value.version
+    const pending = session.readRange({ version: session.value.version, offset: size - 262144, length: 262144 }, { signal: abort.signal })
+    const cancelled = expect(pending).rejects.toMatchObject({ code: 'cancelled' })
+    abort.abort(); await cancelled
+    await until(() => stats.active === 0, 'native cancelled-read drain')
+    expect(stats.cancels).toBeGreaterThan(0)
+
+    if (size === 65 * 1024 * 1024) {
+      // Functional proof of >120 actual bridge RPCs: a scan must find its only marker at EOF.
+      ;(app.$('byteSearch') as HTMLInputElement).value = 'DE AD BE EF'
+      app.$('byteSearch').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+      await until(() => app!.$('statusTask').textContent !== 'Searching…', '65 MiB complete bounded scan')
+      await until(() => /1 \/ 1/.test(app!.$('matchCount').textContent ?? ''), `EOF search result; notice=${app.$('notice').textContent}`)
+      expect(stats.reads).toBeGreaterThan(120)
+    } else {
+      ;(app.$('byteSearch') as HTMLInputElement).value = 'FF FF FF FF'
+      app.$('byteSearch').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+      await until(() => stats.active > 0, 'pending actual scan before file invalidation')
+    }
+    const file = await open(path, 'r+')
+    try { await file.write(new Uint8Array([183, 0]), 0, 2, 18); await file.write(new Uint8Array([0xce]), 0, 1, size - 1) }
+    finally { await file.close() }
+    await until(() => !(app!.$('reloadFile') as HTMLButtonElement).hidden, 'native file change reaches public invalidation')
+    expect(app.$('notice').textContent).toContain('File changed')
+    for (const id of ['fileSummary', 'hexRows', 'inspector', 'tableScroll', 'archiveBack', 'matchCount']) expect(app.$(id).textContent).toBe('')
+    await until(() => stats.active === 0, 'invalidated reads drain')
+    const stopped = stats.reads; await tick(); await tick(); expect(stats.reads).toBe(stopped)
+    app.$('reloadFile').click()
+    await until(() => /ELF.*AArch64/.test(app!.$('fileSummary').textContent ?? ''), 'explicit Reload obtains new descriptor/header')
+    expect(content.rangeDocument!.value().version).toBeGreaterThan(previousVersion)
+    await app.end(); await until(() => document.getElementById(`byte-${size - 1}`)?.textContent === 'CE', 'fresh EOF bytes after explicit Reload')
+    await until(() => stats.active === 0, 'reloaded visible reads drain')
+    expect(stats.maximumLength).toBeLessThanOrEqual(262144); expect(stats.maximumActive).toBeLessThanOrEqual(2)
+    expect(oldReader.fullRead).not.toHaveBeenCalled()
+    observations.push({
+      kind: 'extensionless-ELF', fileBytes: size, initialInspectionRangePayloadBytes: initialPayloadBytes,
+      rangePayloadBytes: stats.bytes, rangeReadRequests: stats.reads, maximumRequestedRangeBytes: stats.maximumLength,
+      maximumInFlightRangeReads: stats.maximumActive, cancellationRequests: stats.cancels,
+      oldFullReads: oldReader.fullRead.mock.calls.length, publicVersionAfterReload: content.rangeDocument!.value().version,
+      initialSummary, reloadedSummary: app.$('fileSummary').textContent,
+      reloadedEOFByte: document.getElementById(`byte-${size - 1}`)?.textContent
+    })
+  } finally { app?.close(); loader.dispose(); await documents.closeOwner(owner); await rm(folder, { recursive: true, force: true }) }
+}, 30000)
+
+it('actual empty New inspection retains range ownership and enables file selection without full bytes', async () => {
+  const folder = await mkdtemp(join(tmpdir(), 'binary-empty-integration-')), path = join(folder, 'empty.bin')
+  const documents = new RangedFileDocuments(), owner = 'integration-empty'
+  await sparseElf(path, 0)
+  const stats = bindNativeApi(documents, owner), loader = makeLoader()
+  let app: ReturnType<typeof mountConsumer> | undefined
+  try {
+    await loader.load(path)
+    const content = loader.content()
+    expect(content?.loadError).toBeUndefined(); expect(content?.rangeDocument?.descriptor.byteLength).toBe(0)
+    app = mountConsumer(content)
+    await until(() => !(app!.$('openFile') as HTMLButtonElement).disabled, 'empty ranged file picker ready')
+    expect((app.$('openFile') as HTMLButtonElement).hidden).toBe(false)
+    expect(stats.reads).toBe(0); expect(oldReader.fullRead).not.toHaveBeenCalled()
+    observations.push({
+      kind: 'empty-New-inspection', fileBytes: content.rangeDocument!.descriptor.byteLength,
+      rangePayloadBytes: stats.bytes, rangeReadRequests: stats.reads, maximumRequestedRangeBytes: stats.maximumLength,
+      maximumInFlightRangeReads: stats.maximumActive, cancellationRequests: stats.cancels,
+      oldFullReads: oldReader.fullRead.mock.calls.length, pickerEnabled: !(app.$('openFile') as HTMLButtonElement).disabled
+    })
+  } finally { app?.close(); loader.dispose(); await documents.closeOwner(owner); await rm(folder, { recursive: true, force: true }) }
+})
+
+
+it.each([undefined, 'source'] as const)('same extensionless name with plain text keeps real Source after choice %s', async (choice) => {
+  const folder = await mkdtemp(join(tmpdir(), 'binary-text-integration-')), path = join(folder, 'sample')
+  const text = 'Plain text opens in Source.\n'
+  const documents = new RangedFileDocuments(), owner = 'integration-text'
+  await writeFile(path, text)
+  const stats = bindNativeApi(documents, owner), loader = makeLoader()
+  if (choice) useCustomEditorViewStore.setState({ choices: { document: choice } })
+  oldReader.fullRead.mockImplementationOnce(({ filePath }) => readLocalFileContent(filePath))
+  try {
+    const candidates = customEditorsForFile(path, collectActivePluginCustomEditors(usePluginPanelsStore.getState().plugins))
+    expect(candidates.some((editor) => editor.id === 'binary-inspector')).toBe(true)
+    await loader.load(path)
+    const content = loader.content()
+    expect(content?.loadError).toBeUndefined()
+    expect(content?.content).toBe(text); expect(content?.isBinary).toBe(false)
+    expect(content?.rangeDocument).toBeUndefined()
+    const eligible = eligibleCustomEditorsForContent({ filePath: path, mode: 'edit' }, content, candidates)
+    expect(resolveCustomEditorChoice(eligible, choice)).toBeNull()
+    expect(oldReader.fullRead).toHaveBeenCalledTimes(1)
+    expect(stats.reads).toBe(0)
+    expect(stats.opens).toBe(choice === 'source' ? 0 : 1)
+    expect(stats.closes).toBe(stats.opens)
+    for (const id of stats.openedIds) await expect(documents.status(owner, id)).rejects.toMatchObject({ code: 'range_document_unknown' })
+    observations.push({
+      kind: choice === 'source' ? 'extensionless-text-explicit-Source' : 'extensionless-text-default',
+      fileBytes: new TextEncoder().encode(text).byteLength, rangeProbeOpens: stats.opens, closedRangeProbes: stats.closes,
+      rangePayloadBytes: stats.bytes, rangeReadRequests: stats.reads, ordinarySourceReads: oldReader.fullRead.mock.calls.length,
+      sourceText: content.content, isBinary: content.isBinary, hasRangePlaceholder: content.rangeDocument !== undefined
+    })
+  } finally { loader.dispose(); await documents.closeOwner(owner); await rm(folder, { recursive: true, force: true }) }
+})
