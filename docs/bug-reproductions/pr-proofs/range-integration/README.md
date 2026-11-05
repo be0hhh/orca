@@ -46,10 +46,8 @@ The harness loads the real consumer modules through `pathToFileURL` and dynamic 
 
 This covers the local in-process filesystem/renderer/frame contract. It does not claim Electron process IPC/transfer acceptance, browser layout/font acceptance, remote SSH/RPC pairing or live installed-app verification. The log's module-type warning is preserved.
 
-The harness is stored with a `.txt` suffix so evidence does not become an application build input. Copy it to the stated editor test path with the normal `.test.tsx` filename before running. `binary-range-before.integration.test.ts.txt` is the independent unmodified-base local-admission probe; it verifies both sparse inputs are refused above the existing 50 MiB local limit, without whole-file allocation.
+The harness is stored with `.txt` suffix so it does not become an application build input. Copy it to the specified editor test path with its normal `.test.tsx` filename.
 
-## Reproducing the exact combined host
+## Exact combined-host reproduction
 
-`combined-host.patch` contains the tested combination of the two independent host PRs, including their additive-field conflict resolution. Apply it to Orca commit `4337392b75bf70902227295a3f0c85b4040adb28` in a disposable checkout after normal repository dependency setup. It contains no installed-app configuration or private project data. Then copy the portable harness (remove its `.txt` suffix) into `src/renderer/src/components/editor/`, check out consumer commit `71ae801`, set `BINARY_TOOLS_SOURCE` to that plugin checkout and run the selected test command above.
-
-This patch is reproduction evidence; the official source changes remain the two separate PRs. It makes the otherwise private combined-source snapshot reproducible without guessing the merge resolutions.
+Apply `combined-host.patch` to disposable Orca checkout `4337392b75bf70902227295a3f0c85b4040adb28` after normal dependency setup. It contains the tested combination and additive-field merge resolutions for the independent binary fallback and range-session PRs. Then copy the portable harness into the editor test directory, check out consumer `71ae801`, set `BINARY_TOOLS_SOURCE` to that checkout and run the selected command above. The independent `binary-range-before.integration.test.ts.txt` verifies the old local 50 MiB admission limit. No installed-app settings or private project data is included.

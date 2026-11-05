@@ -3,7 +3,7 @@
   "status": "passed",
   "testFiles": 1,
   "testsPassed": 5,
-  "hostCommit": "26f0e5b90b25adc6119fd98a54cb96cc355c167a",
+  "hostCommit": "110029f4599416c8f9330c46d95fc434c09bf5e0",
   "command": "BINARY_TOOLS_SOURCE=/path/to/plugin node config/scripts/run-vitest.mjs run --config config/vitest.config.ts src/renderer/src/components/editor/binary-tools-host-consumer.integration.test.tsx --maxWorkers=1",
   "environment": "Inherited ORCA_* removed; supported local runner reinstated ORCA_BACKGROUND_LAUNCH=1.",
   "consumerSourceSha256": {
@@ -17,8 +17,10 @@
   "scope": "Native local sparse files through actual loader, RangedFileDocuments, RuntimeRangeDocument, custom-editor bridge, injected shell SDK and actual Binary Tools UI/Reader.",
   "boundary": "In-process window.api.fs adapter replaces OS IPC scheduling; no Electron browser process, remote RPC pairing or live app acceptance is claimed.",
   "payloadMetric": "Counts successful readRange response bytes; excludes bounded classification probes and failed/cancelled requests.",
+  "evidenceGeneratedAt": "2026-11-05T02:32:28.032Z",
+  "sourceRun": "final-06",
   "combinedHostPatch": {
     "base": "4337392b75bf70902227295a3f0c85b4040adb28",
-    "sha256": "828b43deba66d5cb4a9403d10d7a8c46da915070d679ca29bf40591c3af3512a"
+    "sha256": "04dddcdb3fe91920c7238bb76b066f24ebd41922523a7304781e7d5a036044d3"
   }
 }

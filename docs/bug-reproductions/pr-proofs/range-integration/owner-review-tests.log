@@ -1,0 +1,17 @@
+$ node config/scripts/build-workspace-packages.mjs && node config/scripts/ensure-native-runtime.mjs --runtime=node && node config/scripts/run-vitest.mjs run --config config/vitest.config.ts src/renderer/src/components/editor/PluginRangeCustomEditorSurface.test.tsx src/main/ipc/filesystem/ranged-file-document-watch.test.ts src/main/runtime/rpc/methods/files-ranged-document-methods.test.ts src/renderer/src/components/editor/useEditorPanelFileContentLoader.ranges.test.tsx src/main/ipc/filesystem/ranged-file-documents.test.ts src/renderer/src/components/editor/plugin-range-editor-host.test.ts src/renderer/src/components/editor/EditorFileLoadErrorView.test.tsx --maxWorkers=1
+(node:2918596) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///host-checkout/src/shared/orcad-artifacts.ts is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /host-checkout/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+ RUN  v5.0.5 /host-checkout
+
+
+ Test Files  7 passed (7)
+      Tests  28 passed (28)
+   Start at  05:25:47
+   Duration  21.18s (transform 46%, import 33%, tests 17%, environment 3%, setup 1%)
+
+     Import  |bun| 2463 modules were evaluated 6768 times · 6.72s total, 33% of tracked time
+             ~4.27s faster with isolate: false — shared modules are evaluated once per worker instead of once per file
+             learn more: https://vitest.dev/guide/improving-performance#test-isolation

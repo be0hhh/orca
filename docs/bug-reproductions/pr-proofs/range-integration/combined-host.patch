@@ -1,8 +1,8 @@
 diff --git a/docs/reference/plugin-authoring.md b/docs/reference/plugin-authoring.md
-index dea06aa405e..e1f002b55ef 100644
+index dea06aa405e..558786f8ef1 100644
 --- a/docs/reference/plugin-authoring.md
 +++ b/docs/reference/plugin-authoring.md
-@@ -318,6 +318,53 @@ desktop app with isolated frames switched off, then never run it in the fallback
+@@ -318,6 +318,55 @@ desktop app with isolated frames switched off, then never run it in the fallback
  opens in Source with "This editor needs the Orca desktop app". The default, `any`, runs wherever
  the client can.
  
@@ -12,6 +12,8 @@ index dea06aa405e..e1f002b55ef 100644
 +separate API from `get()`/`session()`:
 +
 +```js
++const controller = new AbortController()
++const signal = controller.signal
 +const doc = await orca.document.rangeSession()
 +const { version, byteLength, maxReadBytes } = doc.value
 +const chunk = await doc.readRange(
@@ -473,13 +475,76 @@ index 00000000000..87f2ee01f49
 +    valid: document.valid
 +  }
 +}
+diff --git a/src/main/ipc/filesystem/ranged-file-document-watch.test.ts b/src/main/ipc/filesystem/ranged-file-document-watch.test.ts
+new file mode 100644
+index 00000000000..3390e5dc3bb
+--- /dev/null
++++ b/src/main/ipc/filesystem/ranged-file-document-watch.test.ts
+@@ -0,0 +1,57 @@
++import { mkdtemp, rm, writeFile } from 'node:fs/promises'
++import { tmpdir } from 'node:os'
++import { basename, join } from 'node:path'
++import { expect, it, vi } from 'vitest'
++import type * as FileSystem from 'node:fs'
++import { RangedFileDocuments } from './ranged-file-documents'
++
++const notifications: { changed?: (event: string, name: string | null) => void } = vi.hoisted(
++  () => ({})
++)
++vi.mock('node:fs', async (importOriginal) => {
++  const original = await importOriginal<typeof FileSystem>()
++  const { EventEmitter } = await import('node:events')
++  return {
++    ...original,
++    watch: (_path: unknown, changed: (event: string, name: string | null) => void) => {
++      notifications.changed = changed
++      const watcher = new EventEmitter()
++      return Object.assign(watcher, { close: () => {}, unref: () => watcher })
++    }
++  }
++})
++
++it('invalidates a delivered own-file change even when native revision metadata is unchanged', async () => {
++  const folder = await mkdtemp(join(tmpdir(), 'orca-range-watch-'))
++  const path = join(folder, 'document.bin')
++  const documents = new RangedFileDocuments()
++  try {
++    await writeFile(path, 'before')
++    const document = await documents.open('owner', async () => path)
++    // The external notification can arrive while coarse revision fields still equal the opened revision.
++    notifications.changed!('change', basename(path))
++    expect((await documents.status('owner', document.id)).valid).toBe(false)
++    await expect(
++      documents.read('owner', {
++        id: document.id,
++        version: document.version,
++        offset: 0,
++        length: 6,
++        requestToken: 'read'
++      })
++    ).rejects.toThrow('stale')
++    await writeFile(path, 'after!')
++    const next = await documents.reload('owner', document.id)
++    const read = await documents.read('owner', {
++      id: next.id,
++      version: next.version,
++      offset: 0,
++      length: 6,
++      requestToken: 'read'
++    })
++    expect(read.contentBase64).toBe('YWZ0ZXIh')
++  } finally {
++    await documents.closeOwner('owner')
++    await rm(folder, { recursive: true, force: true })
++  }
++})
 diff --git a/src/main/ipc/filesystem/ranged-file-documents.test.ts b/src/main/ipc/filesystem/ranged-file-documents.test.ts
 new file mode 100644
-index 00000000000..bee1d70cd25
+index 00000000000..7b88731a677
 --- /dev/null
 +++ b/src/main/ipc/filesystem/ranged-file-documents.test.ts
-@@ -0,0 +1,191 @@
-+import { mkdtemp, open, rename, rm, writeFile } from 'node:fs/promises'
+@@ -0,0 +1,193 @@
++import { mkdtemp, open, rename, rm, writeFile, utimes } from 'node:fs/promises'
 +import { tmpdir } from 'node:os'
 +import { join } from 'node:path'
 +import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -610,6 +675,7 @@ index 00000000000..bee1d70cd25
 +
 +  it('refuses a revision changed while a read was validating its current authority', async () => {
 +    await writeFile(path, 'before')
++    await utimes(path, new Date('2020-01-01T00:00:00Z'), new Date('2020-01-01T00:00:00Z'))
 +    let release: (() => void) | undefined
 +    let checking = false
 +    const barrier = new Promise<void>((resolve) => {
@@ -624,6 +690,7 @@ index 00000000000..bee1d70cd25
 +    checking = true
 +    const pending = read(document.id, document.version, 0, 6)
 +    await writeFile(path, 'after!')
++    await utimes(path, new Date('2021-01-01T00:00:00Z'), new Date('2021-01-01T00:00:00Z'))
 +    release!()
 +    await expect(pending).rejects.toThrow()
 +    expect((await documents.status(owner, document.id)).valid).toBe(false)
@@ -672,10 +739,10 @@ index 00000000000..bee1d70cd25
 +})
 diff --git a/src/main/ipc/filesystem/ranged-file-documents.ts b/src/main/ipc/filesystem/ranged-file-documents.ts
 new file mode 100644
-index 00000000000..ff322093c70
+index 00000000000..7b289664337
 --- /dev/null
 +++ b/src/main/ipc/filesystem/ranged-file-documents.ts
-@@ -0,0 +1,314 @@
+@@ -0,0 +1,312 @@
 +import { randomUUID } from 'node:crypto'
 +import type { FileHandle } from 'node:fs/promises'
 +import { validateFileRangeRequest } from '../../../shared/file-range-read'
@@ -983,9 +1050,7 @@ index 00000000000..ff322093c70
 +  private installWatcher(document: Document): void {
 +    document.watcher = watchRangedFileDocumentSource(
 +      document.path,
-+      () => {
-+        void this.validate(document)
-+      },
++      () => this.invalidate(document),
 +      () => this.invalidate(document)
 +    )
 +  }
@@ -1517,22 +1582,155 @@ index fbf535b414e..70fc1934441 100644
    if (error instanceof PluginHookDeniedError) {
      // Final, not transient: a retry sends the same refused action.
      return errorResponse(request.id, meta, error.code, error.message, error.data)
+diff --git a/src/main/runtime/rpc/methods/files-ranged-document-methods.test.ts b/src/main/runtime/rpc/methods/files-ranged-document-methods.test.ts
+new file mode 100644
+index 00000000000..9e516f4a72f
+--- /dev/null
++++ b/src/main/runtime/rpc/methods/files-ranged-document-methods.test.ts
+@@ -0,0 +1,118 @@
++import '../unused-default-rpc-methods.test-fixture'
++import { mkdtemp, rm, writeFile } from 'node:fs/promises'
++import { tmpdir } from 'node:os'
++import { join } from 'node:path'
++import { afterEach, beforeEach, describe, expect, it } from 'vitest'
++import { RangedFileDocuments } from '../../../ipc/filesystem/ranged-file-documents'
++import type { OrcaRuntimeService } from '../../orca-runtime'
++import { RpcDispatcher } from '../dispatcher'
++import { FILE_RANGED_DOCUMENT_METHODS } from './files-ranged-document-methods'
++
++let folder: string
++let filePath: string
++let documents: RangedFileDocuments
++let dispatcher: RpcDispatcher
++
++beforeEach(async () => {
++  folder = await mkdtemp(join(tmpdir(), 'orca-range-rpc-owner-'))
++  filePath = join(folder, 'document.bin')
++  await writeFile(filePath, Buffer.from([0, 1, 2, 255]))
++  documents = new RangedFileDocuments()
++  // oxlint-disable-next-line typescript/consistent-type-assertions -- SAFETY: This explicit registry only uses the real ranged-document owner and runtime id.
++  const runtime = {
++    getRuntimeId: () => 'runtime',
++    rangedFileDocuments: {
++      openTarget: (owner: string) => documents.open(owner, async () => filePath),
++      read: documents.read.bind(documents),
++      reload: documents.reload.bind(documents),
++      status: documents.status.bind(documents),
++      cancel: documents.cancel.bind(documents),
++      close: documents.close.bind(documents)
++    }
++  } as unknown as OrcaRuntimeService
++  dispatcher = new RpcDispatcher({ runtime, methods: FILE_RANGED_DOCUMENT_METHODS })
++})
++
++afterEach(async () => {
++  await documents.closeOwner('in-process')
++  await documents.closeOwner('connection-a')
++  await documents.closeOwner('connection-b')
++  await rm(folder, { recursive: true, force: true })
++})
++
++function dispatch(method: string, params: unknown, connectionId?: string) {
++  return dispatcher.dispatch(
++    { id: 'request', authToken: 'token', method, params },
++    { connectionId }
++  )
++}
++
++describe('ranged-document RPC connection authority', () => {
++  it.each([undefined, ''])(
++    'refuses every method without a stable connection (%s)',
++    async (connectionId) => {
++      const held = await documents.open('in-process', async () => filePath)
++      const id = held.id
++      const requests: [string, unknown][] = [
++        ['files.rangeDocumentOpen', { worktree: 'id:workspace', relativePath: 'document.bin' }],
++        ['files.rangeDocumentRead', { id, version: 1, offset: 0, length: 4, requestToken: 'read' }],
++        ['files.rangeDocumentStatus', { id }],
++        ['files.rangeDocumentCancel', { id, requestToken: 'read' }],
++        ['files.rangeDocumentReload', { id }],
++        ['files.rangeDocumentClose', { id }]
++      ]
++      for (const [method, params] of requests) {
++        expect(await dispatch(method, params, connectionId)).toMatchObject({
++          ok: false,
++          error: { code: 'range_document_unsupported' }
++        })
++      }
++      expect(
++        await documents.read('in-process', {
++          id,
++          version: 1,
++          offset: 0,
++          length: 4,
++          requestToken: 'retained'
++        })
++      ).toEqual({ version: 1, contentBase64: 'AAEC/w==', bytesRead: 4, eof: true })
++    }
++  )
++
++  it('uses the authenticated connection for bytes, sibling isolation and disconnect cleanup', async () => {
++    expect(
++      await dispatch(
++        'files.rangeDocumentOpen',
++        {
++          worktree: 'id:workspace',
++          relativePath: 'document.bin'
++        },
++        'connection-a'
++      )
++    ).toMatchObject({
++      ok: true,
++      result: { version: 1, byteLength: 4, readOnly: true, isBinary: true, valid: true }
++    })
++    const held = await documents.open('connection-a', async () => filePath)
++    const params = { id: held.id, version: 1, offset: 1, length: 3, requestToken: 'read' }
++    expect(await dispatch('files.rangeDocumentRead', params, 'connection-a')).toMatchObject({
++      ok: true,
++      result: { version: 1, contentBase64: 'AQL/', bytesRead: 3, eof: true }
++    })
++    expect(await dispatch('files.rangeDocumentRead', params, 'connection-b')).toMatchObject({
++      ok: false,
++      error: { code: 'range_document_unknown' }
++    })
++    await documents.closeOwner('connection-a')
++    expect(
++      await dispatch('files.rangeDocumentStatus', { id: held.id }, 'connection-a')
++    ).toMatchObject({
++      ok: false,
++      error: { code: 'range_document_unknown' }
++    })
++    expect(await dispatch('files.rangeDocumentRead', params, 'connection-a')).toMatchObject({
++      ok: false,
++      error: { code: 'range_document_unknown' }
++    })
++  })
++})
 diff --git a/src/main/runtime/rpc/methods/files-ranged-document-methods.ts b/src/main/runtime/rpc/methods/files-ranged-document-methods.ts
 new file mode 100644
-index 00000000000..02705b37a0d
+index 00000000000..3600b3bdc56
 --- /dev/null
 +++ b/src/main/runtime/rpc/methods/files-ranged-document-methods.ts
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,68 @@
 +import { defineMethod } from '../core'
 +import {
 +  RANGED_FILE_DOCUMENT_METHODS,
++  RangedFileDocumentError,
 +  RangedDocumentCancel,
 +  RangedDocumentId,
 +  RangedDocumentOpen,
 +  RangedDocumentRead
 +} from '../../../../shared/ranged-file-document'
 +
-+const owner = (connectionId: string | undefined) => connectionId ?? 'in-process'
++function owner(connectionId: string | undefined): string {
++  if (!connectionId) {
++    throw new RangedFileDocumentError(
++      'range_document_unsupported',
++      'Ranged documents require a stable runtime connection.'
++    )
++  }
++  return connectionId
++}
 +
 +export const FILE_RANGED_DOCUMENT_METHODS = [
 +  defineMethod({
@@ -1987,10 +2185,27 @@ index f68e4787b4e..c5f9f791d16 100644
      ]
    })
 diff --git a/src/renderer/src/components/editor/EditorEditFileSurface.tsx b/src/renderer/src/components/editor/EditorEditFileSurface.tsx
-index 4ae709b423a..6e7577e1aac 100644
+index 4ae709b423a..4881f7e3b53 100644
 --- a/src/renderer/src/components/editor/EditorEditFileSurface.tsx
 +++ b/src/renderer/src/components/editor/EditorEditFileSurface.tsx
-@@ -153,7 +153,7 @@ export function EditorEditFileSurface({
+@@ -1,3 +1,4 @@
++import { openEditorRangeSource } from './editor-range-document'
+ import { translate } from '@/i18n/i18n'
+ import { getConnectionIdForFile } from '@/lib/connection-context'
+ import type { MarkdownViewMode, OpenFile, PendingEditorReveal } from '@/store/slices/editor'
+@@ -137,6 +138,11 @@ export function EditorEditFileSurface({
+         code={fileContent.loadErrorCode}
+         worktreeId={activeFile.worktreeId}
+         onRetry={() => reloadContent(activeFile, USER_RETRY)}
++        onOpenSource={
++          fileContent.rangeLoadError
++            ? () => openEditorRangeSource(activeFile, reloadContent)
++            : undefined
++        }
+         onHostStarted={() => reloadContent(activeFile)}
+       />
+     )
+@@ -153,7 +159,7 @@ export function EditorEditFileSurface({
        />
      )
    }
@@ -1999,7 +2214,7 @@ index 4ae709b423a..6e7577e1aac 100644
      if (fileContent.mediaUrl && !fileContent.isImage) {
        return (
          <MediaViewer
-@@ -185,7 +185,7 @@ export function EditorEditFileSurface({
+@@ -185,7 +191,7 @@ export function EditorEditFileSurface({
      }
      return (
        <div className="flex h-full flex-col">
@@ -2008,7 +2223,7 @@ index 4ae709b423a..6e7577e1aac 100644
          <PluginFileTypeSuggestion filePath={activeFile.filePath} />
          <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
            {translate(
-@@ -363,7 +363,7 @@ export function EditorEditFileSurface({
+@@ -363,7 +369,7 @@ export function EditorEditFileSurface({
      <div className="flex flex-1 min-h-0 flex-col">
        {externalChangeBanner}
        {customEditor ? null : (
@@ -2017,6 +2232,54 @@ index 4ae709b423a..6e7577e1aac 100644
        )}
        {customEditor ? null : (
          <PluginFileTypeSuggestion
+diff --git a/src/renderer/src/components/editor/EditorFileLoadErrorView.tsx b/src/renderer/src/components/editor/EditorFileLoadErrorView.tsx
+index a7e64d73be2..90b31e93973 100644
+--- a/src/renderer/src/components/editor/EditorFileLoadErrorView.tsx
++++ b/src/renderer/src/components/editor/EditorFileLoadErrorView.tsx
+@@ -32,6 +32,7 @@ export function EditorFileLoadErrorView({
+   code,
+   worktreeId,
+   onRetry,
++  onOpenSource,
+   onHostStarted
+ }: {
+   message: string
+@@ -39,19 +40,26 @@ export function EditorFileLoadErrorView({
+   /** The file's workspace; a stopped WSL host there gets Start instead of this error. */
+   worktreeId?: string
+   onRetry: () => void
++  onOpenSource?: () => void
+   /** Reloads after Start without asking to wake again: the click already booted the host. */
+   onHostStarted?: () => void
+ }): React.JSX.Element {
+   const stoppedWslHost = useStoppedWslHost(worktreeId)
++  const sourceAction = onOpenSource ? (
++    <Button type="button" variant="outline" size="sm" className="mt-3" onClick={onOpenSource}>
++      {translate('auto.components.editor.EditorViewToggle.4d6ccb7ba6', 'Source')}
++    </Button>
++  ) : null
+   if (stoppedWslHost) {
+     return (
+-      <div className="flex h-full items-center justify-center bg-editor-surface p-6 text-sm">
++      <div className="flex h-full flex-col items-center justify-center bg-editor-surface p-6 text-sm">
+         <WslHostStoppedNotice
+           environmentId={stoppedWslHost.environmentId}
+           distro={stoppedWslHost.distro}
+           size="sm"
+           onStarted={onHostStarted}
+         />
++        {sourceAction}
+       </div>
+     )
+   }
+@@ -68,6 +76,7 @@ export function EditorFileLoadErrorView({
+             <RefreshCw className="size-3.5" />
+             {translate('auto.components.editor.EditorContent.2a512bb46a', 'Retry')}
+           </Button>
++          {sourceAction}
+         </div>
+       </div>
+     </div>
 diff --git a/src/renderer/src/components/editor/EditorPanel.tsx b/src/renderer/src/components/editor/EditorPanel.tsx
 index d21735e26b7..42038de26ea 100644
 --- a/src/renderer/src/components/editor/EditorPanel.tsx
@@ -2042,14 +2305,15 @@ index d21735e26b7..42038de26ea 100644
      requestedChangesMode &&
      !!activeFile &&
 diff --git a/src/renderer/src/components/editor/PluginBytesCustomEditorSurface.tsx b/src/renderer/src/components/editor/PluginBytesCustomEditorSurface.tsx
-index 5520d75e1f0..96d73aef1fe 100644
+index 5520d75e1f0..4cb95037593 100644
 --- a/src/renderer/src/components/editor/PluginBytesCustomEditorSurface.tsx
 +++ b/src/renderer/src/components/editor/PluginBytesCustomEditorSurface.tsx
-@@ -1,4 +1,18 @@
+@@ -1,4 +1,19 @@
 -import React, { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 +import type { RuntimeRangeDocument } from '@/runtime/runtime-range-document'
 +import {
 +  openEditorRangeDocument,
++  openEditorRangeSource,
 +  isEditorRangeDocumentDirty,
 +  EDITOR_RANGE_DIRTY_MESSAGE
 +} from './editor-range-document'
@@ -2065,7 +2329,7 @@ index 5520d75e1f0..96d73aef1fe 100644
  import { translate } from '@/i18n/i18n'
  import { basename } from '@/lib/path'
  import { readRuntimeFileBytes } from '@/runtime/runtime-paged-file-read'
-@@ -11,6 +25,11 @@ import { Button } from '../ui/button'
+@@ -11,6 +26,11 @@ import { Button } from '../ui/button'
  import type { OpenFile } from '@/store/slices/editor'
  import type { FileContent } from './editor-panel-content-types'
  import PluginCustomEditorFrame from './PluginCustomEditorFrame'
@@ -2077,22 +2341,47 @@ index 5520d75e1f0..96d73aef1fe 100644
  import { ExternalFileChangeBanner } from './external-changes/ExternalFileChangeBanner'
  import {
    editorBytesDocument,
-@@ -51,6 +70,95 @@ function SurfaceMessage({
-   )
- }
+@@ -34,10 +54,12 @@ const noopContentChange = (_content: string): void => {}
  
+ function SurfaceMessage({
+   children,
+-  onRetry
++  onRetry,
++  onOpenSource
+ }: {
+   children: React.ReactNode
+   onRetry?: () => void
++  onOpenSource?: () => void
+ }): React.JSX.Element {
+   return (
+     <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center text-sm text-muted-foreground">
+@@ -47,6 +69,113 @@ function SurfaceMessage({
+           {translate('auto.components.editor.PluginBytesCustomEditorSurface.retry', 'Retry')}
+         </Button>
+       ) : null}
++      {onOpenSource ? (
++        <Button type="button" size="sm" variant="outline" onClick={onOpenSource}>
++          {translate('auto.components.editor.EditorViewToggle.4d6ccb7ba6', 'Source')}
++        </Button>
++      ) : null}
++    </div>
++  )
++}
++
 +function RangeSurface({
 +  editor,
 +  file,
 +  fileContent,
 +  fileType,
-+  onSave
++  onSave,
++  reloadContent
 +}: {
 +  editor: ActivePluginCustomEditor
 +  file: OpenFile
 +  fileContent: FileContent
 +  fileType: string
 +  onSave: (content: string) => Promise<boolean>
++  reloadContent: (file: OpenFile) => void
 +}): React.JSX.Element {
 +  const dirty = useAppStore((state) => isEditorRangeDocumentDirty(state, file.id, file))
 +  const fileRef = useRef(file)
@@ -2106,6 +2395,7 @@ index 5520d75e1f0..96d73aef1fe 100644
 +  const [attempt, setAttempt] = useState(0)
 +  useEffect(() => {
 +    if (fileContent.rangeDocument) {
++      setError('')
 +      setSource(fileContent.rangeDocument)
 +      return
 +    }
@@ -2128,7 +2418,10 @@ index 5520d75e1f0..96d73aef1fe 100644
 +      },
 +      (failure: unknown) => {
 +        if (active) {
-+          setError(failure instanceof Error ? failure.message : String(failure))
++          setError(
++            (failure instanceof Error ? failure.message : String(failure)) ||
++              'Unable to load the ranged document.'
++          )
 +        }
 +      }
 +    )
@@ -2138,7 +2431,14 @@ index 5520d75e1f0..96d73aef1fe 100644
 +    }
 +  }, [fileContent.rangeDocument, fileContent.byteSource, file.filePath, file.id, attempt])
 +  if (error) {
-+    return <SurfaceMessage onRetry={() => setAttempt((value) => value + 1)}>{error}</SurfaceMessage>
++    return (
++      <SurfaceMessage
++        onRetry={() => setAttempt((value) => value + 1)}
++        onOpenSource={() => openEditorRangeSource(file, reloadContent)}
++      >
++        {error}
++      </SurfaceMessage>
++    )
 +  }
 +  if (!source) {
 +    return (
@@ -2166,14 +2466,10 @@ index 5520d75e1f0..96d73aef1fe 100644
 +          rangeFileType={fileType}
 +        />
 +      </div>
-+    </div>
-+  )
-+}
-+
- /**
-  * A bytes editor: Orca pages the file from the host that owns it (local, SSH or a paired runtime),
-  * caps its size, and hands the frame only the bytes, never a path. Its edits replace the whole
-@@ -69,6 +177,9 @@ export default function PluginBytesCustomEditorSurface({
+     </div>
+   )
+ }
+@@ -69,6 +198,9 @@ export default function PluginBytesCustomEditorSurface({
    onSave: (content: string) => Promise<boolean>
    reloadContent: (file: OpenFile) => void
  }): React.JSX.Element {
@@ -2183,7 +2479,7 @@ index 5520d75e1f0..96d73aef1fe 100644
    const [state, setState] = useState<BytesState>({ status: 'ok' })
    const [attempt, setAttempt] = useState(0)
    const { id: fileId, filePath } = file
-@@ -86,11 +197,17 @@ export default function PluginBytesCustomEditorSurface({
+@@ -86,11 +218,17 @@ export default function PluginBytesCustomEditorSurface({
      [fileId]
    )
    useEffect(() => {
@@ -2202,13 +2498,13 @@ index 5520d75e1f0..96d73aef1fe 100644
      // Unsaved bytes keep the baseline they were made against; rereading would hide a conflict.
      if (!loadKey || hasEditorBytesDraft(fileId)) {
        return
-@@ -126,8 +243,36 @@ export default function PluginBytesCustomEditorSurface({
+@@ -126,8 +264,37 @@ export default function PluginBytesCustomEditorSurface({
      return () => {
        cancelled = true
      }
 -  }, [loadKey, source, fileType, attempt, fileId])
 +  }, [loadKey, source, fileType, attempt, fileId, isRange])
- 
++
 +  useEffect(() => {
 +    if (!isRange && state.status !== 'ok') {
 +      reportPluginEditorFailure(
@@ -2225,7 +2521,7 @@ index 5520d75e1f0..96d73aef1fe 100644
 +    }
 +    return () => withdrawPluginEditorFrame(fileId, failureOwner)
 +  }, [fileId, state, editor.key, failureOwner, captureLoad, isRange])
-+
+ 
 +  if (isRange) {
 +    return (
 +      <RangeSurface
@@ -2234,6 +2530,7 @@ index 5520d75e1f0..96d73aef1fe 100644
 +        fileContent={fileContent}
 +        fileType={fileType}
 +        onSave={onSave}
++        reloadContent={reloadContent}
 +      />
 +    )
 +  }
@@ -2383,8 +2680,186 @@ index d83ee80ac52..d38a1e47437 100644
    // Why not after a pick: choosing Source is a choice, not a fallback worth explaining.
    if (!unavailable || customEditorChoice !== undefined) {
      return null
+diff --git a/src/renderer/src/components/editor/PluginRangeCustomEditorSurface.test.tsx b/src/renderer/src/components/editor/PluginRangeCustomEditorSurface.test.tsx
+new file mode 100644
+index 00000000000..8f77f649210
+--- /dev/null
++++ b/src/renderer/src/components/editor/PluginRangeCustomEditorSurface.test.tsx
+@@ -0,0 +1,172 @@
++// @vitest-environment happy-dom
++
++import { act, cleanup, fireEvent, render } from '@testing-library/react'
++import { afterEach, beforeEach, expect, it, vi } from 'vitest'
++import { useAppStore } from '@/store'
++import {
++  useCustomEditorViewStore,
++  type ActivePluginCustomEditor
++} from '@/store/plugin-custom-editors'
++import type { OpenFile } from '@/store/slices/editor'
++import type { FileContent } from './editor-panel-content-types'
++import {
++  openEditorRangeDocument,
++  openEditorRangeSource,
++  readEditorRangeFileContent
++} from './editor-range-document'
++import type { RuntimeRangeDocument } from '@/runtime/runtime-range-document'
++import { RuntimeRpcCallError } from '@/runtime/runtime-rpc-result'
++import PluginBytesCustomEditorSurface from './PluginBytesCustomEditorSurface'
++import { EditorFileLoadErrorView } from './EditorFileLoadErrorView'
++
++vi.mock('./PluginCustomEditorFrame', () => ({
++  default: ({ rangeDocument }: { rangeDocument: RuntimeRangeDocument }) => (
++    <output data-testid="range-frame">{rangeDocument.value().byteLength}</output>
++  )
++}))
++vi.mock('../wsl-host-stopped/use-stopped-wsl-host', () => ({ useStoppedWslHost: () => null }))
++
++const originalApi = window.api
++const file: OpenFile = {
++  id: 'file',
++  filePath: '/repo/data.bin',
++  relativePath: 'data.bin',
++  worktreeId: '',
++  language: 'plaintext',
++  mode: 'edit',
++  isDirty: true
++}
++const byteSource = { target: { kind: 'local' as const }, filePath: file.filePath }
++const editor: ActivePluginCustomEditor = {
++  id: 'bytes',
++  title: 'Bytes',
++  key: 'test.range/bytes',
++  pluginKey: 'test.range',
++  pluginName: 'Range',
++  extensions: ['.bin'],
++  filenames: [],
++  priority: 'default',
++  contentKind: 'bytes',
++  documentAccess: 'ranges'
++}
++const content: FileContent = { content: '', isBinary: true, byteSource }
++
++beforeEach(() => {
++  useAppStore.setState(useAppStore.getInitialState(), true)
++  useAppStore.setState({ openFiles: [file] })
++  useCustomEditorViewStore.setState({ choices: { file: editor.key } })
++  Object.assign(window, {
++    api: {
++      fs: {
++        rangeDocumentOpen: async () => ({
++          id: 'saved',
++          version: 1,
++          byteLength: 2,
++          maxReadBytes: 262144,
++          readOnly: true,
++          isBinary: true,
++          valid: true
++        }),
++        rangeDocumentClose: async () => {}
++      }
++    }
++  })
++})
++afterEach(() => {
++  cleanup()
++  useAppStore.setState(useAppStore.getInitialState(), true)
++  Object.assign(window, { api: originalApi })
++})
++
++it('recovers a mounted ranges surface when discard and panel Reload provide a new document', async () => {
++  const view = render(
++    <PluginBytesCustomEditorSurface
++      editor={editor}
++      file={file}
++      fileContent={content}
++      onSave={async () => false}
++      reloadContent={() => {}}
++    />
++  )
++  await view.findByRole('button', { name: 'Source' })
++  expect(view.queryByTestId('range-frame')).toBeNull()
++  let source: RuntimeRangeDocument | undefined
++  try {
++    await act(async () => {
++      useAppStore.getState().markFileDirty(file.id, false)
++      const clean = useAppStore.getState().openFiles[0]
++      source = await openEditorRangeDocument(byteSource, file.id, clean)
++      view.rerender(
++        <PluginBytesCustomEditorSurface
++          editor={editor}
++          file={clean}
++          fileContent={{ ...content, rangeDocument: source }}
++          onSave={async () => false}
++          reloadContent={() => {}}
++        />
++      )
++    })
++    expect(view.getByTestId('range-frame').textContent).toBe('2')
++    expect(view.queryByRole('button', { name: 'Retry' })).toBeNull()
++  } finally {
++    source?.dispose()
++  }
++})
++
++it('leaves an optional range failure through an explicit Source choice before reading Source', async () => {
++  useAppStore.getState().markFileDirty(file.id, false)
++  window.api.fs.rangeDocumentOpen = async () => {
++    throw new RuntimeRpcCallError({
++      id: 'open-range',
++      ok: false,
++      error: { code: 'range_document_unsupported', message: '' }
++    })
++  }
++  let pending: Promise<FileContent> | undefined
++  let observedChoice: string | undefined
++  const reloadContent = () => {
++    observedChoice = useCustomEditorViewStore.getState().choices[file.id]
++    pending = readEditorRangeFileContent({
++      args: byteSource,
++      fileId: file.id,
++      file,
++      isCurrent: () => true,
++      readSource: async () => ({ content: 'saved Source', isBinary: false })
++    })
++  }
++  const view = render(
++    <PluginBytesCustomEditorSurface
++      editor={editor}
++      file={file}
++      fileContent={content}
++      onSave={async () => false}
++      reloadContent={reloadContent}
++    />
++  )
++  const source = await view.findByRole('button', { name: 'Source' })
++  expect(pending).toBeUndefined()
++  await act(async () => {
++    fireEvent.click(source)
++    await pending
++  })
++  expect(observedChoice).toBe('source')
++  await expect(pending).resolves.toMatchObject({ content: 'saved Source', isBinary: false })
++})
++
++it('offers Source on a selected range load error without claiming an editor is ready', () => {
++  let observedChoice: string | undefined
++  const view = render(
++    <EditorFileLoadErrorView
++      message="Ranged documents require a newer host"
++      onRetry={() => {}}
++      onOpenSource={() =>
++        openEditorRangeSource(file, () => {
++          observedChoice = useCustomEditorViewStore.getState().choices[file.id]
++        })
++      }
++    />
++  )
++  expect(observedChoice).toBeUndefined()
++  fireEvent.click(view.getByRole('button', { name: 'Source' }))
++  expect(observedChoice).toBe('source')
++})
 diff --git a/src/renderer/src/components/editor/editor-panel-content-types.ts b/src/renderer/src/components/editor/editor-panel-content-types.ts
-index 68a4e24a8f9..b3007aef80b 100644
+index 68a4e24a8f9..df3545d7e29 100644
 --- a/src/renderer/src/components/editor/editor-panel-content-types.ts
 +++ b/src/renderer/src/components/editor/editor-panel-content-types.ts
 @@ -1,3 +1,4 @@
@@ -2392,7 +2867,13 @@ index 68a4e24a8f9..b3007aef80b 100644
  import type { Dispatch, MutableRefObject, SetStateAction } from 'react'
  import type { OpenFile } from '@/store/slices/editor'
  import type { EditorPanelContentLoadOptions } from './external-changes/useEditorPanelExternalContentEvents'
-@@ -39,6 +40,8 @@ export type FileContent = {
+@@ -35,10 +36,14 @@ export type FileContent = {
+   loadError?: string
+   /** Machine code from a runtime RPC failure; `loadError` alone may be prose (#21041). */
+   loadErrorCode?: string
++  /** A selected range source failed; Source remains an explicit user choice. */
++  rangeLoadError?: true
+   /** Superseded by an external change; still rendered until the lazy reload lands. */
    isStale?: boolean
    /** How the loader reached the file, so a binary custom editor can page its bytes from the same host. */
    byteSource?: RuntimeFileReadArgs
@@ -2401,7 +2882,7 @@ index 68a4e24a8f9..b3007aef80b 100644
  }
  
  export type DiffContent = GitDiffResult & {
-@@ -65,5 +68,6 @@ export type UseEditorPanelFileContentLoaderParams = {
+@@ -65,5 +70,6 @@ export type UseEditorPanelFileContentLoaderParams = {
    fileReadGenerationRef: MutableRefObject<Record<string, number>>
    openFilesRef: MutableRefObject<OpenFile[]>
    outstandingFileReadsRef: MutableRefObject<Record<string, number>>
@@ -2711,10 +3192,11 @@ index 00000000000..e7169ada02c
 +})
 diff --git a/src/renderer/src/components/editor/editor-range-document.ts b/src/renderer/src/components/editor/editor-range-document.ts
 new file mode 100644
-index 00000000000..983c908f3f3
+index 00000000000..4f33ae17d3e
 --- /dev/null
 +++ b/src/renderer/src/components/editor/editor-range-document.ts
-@@ -0,0 +1,147 @@
+@@ -0,0 +1,168 @@
++import { RangedFileDocumentError } from '../../../../shared/ranged-file-document'
 +import { pluginFramesIsolated } from '@/store/plugin-frame-isolation'
 +import {
 +  collectActivePluginCustomEditors,
@@ -2731,6 +3213,23 @@ index 00000000000..983c908f3f3
 +import type { RuntimeFileReadArgs } from '@/runtime/runtime-file-client-types'
 +import { openRuntimeRangeDocument } from '@/runtime/open-runtime-range-document'
 +import { isEditorModelDirty } from './save/queue/editor-save-disk-precondition'
++
++export class EditorRangeLoadError extends Error {
++  constructor(cause: unknown) {
++    super('Unable to load the ranged document.', { cause })
++  }
++
++  markFailure(failure: FileContent): FileContent {
++    failure.rangeLoadError = true
++    failure.loadError ||= this.message
++    return failure
++  }
++}
++
++export function openEditorRangeSource(file: OpenFile, reload: (file: OpenFile) => void): void {
++  useCustomEditorViewStore.getState().setChoice(file.id, 'source')
++  reload(file)
++}
 +
 +export const EDITOR_RANGE_DIRTY_MESSAGE =
 +  'Save or discard unsaved changes before reading file ranges, then reload explicitly.'
@@ -2817,8 +3316,11 @@ index 00000000000..983c908f3f3
 +  )
 +  const selected = chosen && ranges.includes(chosen) ? chosen : null
 +  if (selected && args.terminalArtifactGrantId) {
-+    throw new Error(
-+      'Ranged documents do not support terminal artifact grants. Open the file through its owning workspace.'
++    throw new EditorRangeLoadError(
++      new RangedFileDocumentError(
++        'range_document_unsupported',
++        'Ranged documents do not support terminal artifact grants. Open the file through its owning workspace.'
++      )
 +    )
 +  }
 +  const rangeSourceKey = JSON.stringify({ ...args, wakeWslDistro: undefined })
@@ -2835,7 +3337,7 @@ index 00000000000..983c908f3f3
 +            ) {
 +              return null
 +            }
-+            throw error
++            throw new EditorRangeLoadError(error)
 +          })
 +    if (source) {
 +      if (!isCurrent()) {
@@ -4230,10 +4732,10 @@ index 057df414fab..d0e01ff0065 100644
    useEditorPanelActiveTabContentLoad({
 diff --git a/src/renderer/src/components/editor/useEditorPanelFileContentLoader.ranges.test.tsx b/src/renderer/src/components/editor/useEditorPanelFileContentLoader.ranges.test.tsx
 new file mode 100644
-index 00000000000..e75888a8ebe
+index 00000000000..8b1e5573053
 --- /dev/null
 +++ b/src/renderer/src/components/editor/useEditorPanelFileContentLoader.ranges.test.tsx
-@@ -0,0 +1,359 @@
+@@ -0,0 +1,452 @@
 +// @vitest-environment happy-dom
 +
 +import type * as RuntimeFileReadClient from '@/runtime/runtime-file-read-client'
@@ -4249,6 +4751,8 @@ index 00000000000..e75888a8ebe
 +import { useCustomEditorViewStore } from '@/store/plugin-custom-editors'
 +import type { PluginHostListEntry } from '../../../../shared/plugins/plugin-list-entry'
 +import type { FileContent, EditorPanelFileContentLoader } from './editor-panel-content-types'
++import { openEditorRangeSource } from './editor-range-document'
++import { RuntimeRpcCallError } from '@/runtime/runtime-rpc-result'
 +import { useEditorPanelFileContentLoader } from './useEditorPanelFileContentLoader'
 +
 +const mocks = vi.hoisted(() => ({ fullRead: vi.fn() }))
@@ -4302,7 +4806,7 @@ index 00000000000..e75888a8ebe
 +  usePluginPanelsStore.setState({ plugins: [plugin] })
 +}
 +
-+function loader() {
++function loader(openFiles: OpenFile[] = []) {
 +  const root = createRoot(document.createElement('div'))
 +  let load: EditorPanelFileContentLoader | undefined
 +  let contents: Record<string, FileContent> = {}
@@ -4311,7 +4815,7 @@ index 00000000000..e75888a8ebe
 +      fileLoadRetryAttemptsRef: { current: {} },
 +      fileReadGenerationCounterRef: { current: 0 },
 +      fileReadGenerationRef: { current: {} },
-+      openFilesRef: { current: [] },
++      openFilesRef: { current: openFiles },
 +      outstandingFileReadsRef: { current: {} },
 +      fileContentsRef: {
 +        get current() {
@@ -4593,15 +5097,106 @@ index 00000000000..e75888a8ebe
 +    view.dispose()
 +  }
 +})
++
++it('keeps an explicit Source route after a selected range acquisition fails without falling back automatically', async () => {
++  install()
++  Object.assign(window, {
++    api: {
++      fs: {
++        rangeDocumentOpen: async () => {
++          throw new RuntimeRpcCallError({
++            id: 'open-range',
++            ok: false,
++            error: { code: 'range_document_unsupported', message: '' }
++          })
++        }
++      }
++    }
++  })
++  mocks.fullRead.mockImplementation(async () => {
++    if (useCustomEditorViewStore.getState().choices.file !== 'source') {
++      throw new Error('Source must be explicitly selected')
++    }
++    return { content: 'saved Source', isBinary: false }
++  })
++  const view = loader()
++  const file: OpenFile = {
++    id: 'file',
++    filePath: '/repo/data.bin',
++    relativePath: 'data.bin',
++    worktreeId: '',
++    language: 'plaintext',
++    mode: 'edit',
++    isDirty: false
++  }
++  try {
++    await act(async () => {
++      await view.load()
++    })
++    expect(view.content()).toMatchObject({
++      rangeLoadError: true,
++      content: '',
++      loadErrorCode: 'range_document_unsupported'
++    })
++    expect(view.content().loadError).toBeTruthy()
++    let pending: Promise<void> | undefined
++    await act(async () => {
++      openEditorRangeSource(file, () => {
++        pending = view.load()
++      })
++      await pending
++    })
++    expect(view.content()).toMatchObject({ content: 'saved Source', isBinary: false })
++    expect(view.content().loadError).toBeUndefined()
++  } finally {
++    view.dispose()
++  }
++})
++
++it('retains Source escape for a selected grant-only range source', async () => {
++  install()
++  const file: OpenFile = {
++    id: 'file',
++    filePath: '/repo/data.bin',
++    relativePath: 'data.bin',
++    worktreeId: '',
++    runtimeEnvironmentId: 'remote',
++    terminalArtifactGrantId: 'grant',
++    language: 'plaintext',
++    mode: 'edit',
++    isDirty: false
++  }
++  Object.assign(window, {
++    api: {
++      fs: {
++        rangeDocumentOpen: async () => {
++          throw new Error('Grant cannot authorize a range backend')
++        }
++      }
++    }
++  })
++  const view = loader([file])
++  try {
++    await act(async () => {
++      await view.load()
++    })
++    expect(view.content()).toMatchObject({
++      rangeLoadError: true,
++      loadError: expect.stringContaining('range_document_unsupported')
++    })
++  } finally {
++    view.dispose()
++  }
++})
 diff --git a/src/renderer/src/components/editor/useEditorPanelFileContentLoader.ts b/src/renderer/src/components/editor/useEditorPanelFileContentLoader.ts
-index fd0c8d9b7dc..8e7f07577ce 100644
+index fd0c8d9b7dc..42263bbe1af 100644
 --- a/src/renderer/src/components/editor/useEditorPanelFileContentLoader.ts
 +++ b/src/renderer/src/components/editor/useEditorPanelFileContentLoader.ts
 @@ -5,6 +5,7 @@ import type { OpenFile } from '@/store/slices/editor'
  import { getConnectionIdForFile, isWorktreeConnectionResolved } from '@/lib/connection-context'
  import { useAppStore } from '@/store'
  import { getRuntimeFileReadScope } from '@/runtime/runtime-file-routing'
-+import { readEditorRangeFileContent } from './editor-range-document'
++import { readEditorRangeFileContent, EditorRangeLoadError } from './editor-range-document'
  import { readEditorCsvFileContent } from './csv/csv-file-content'
  import type { RuntimeClientTarget } from '../../../../shared/runtime-client-target'
  import { requireRuntimeTargetForFileOwner } from '@/lib/file-owner-runtime-target'
@@ -4642,7 +5237,7 @@ index fd0c8d9b7dc..8e7f07577ce 100644
            return
          }
          if (result.csvPreview && useAppStore.getState().editorDrafts[id] !== undefined) {
-@@ -249,10 +264,7 @@ export function useEditorPanelFileContentLoader({
+@@ -249,27 +264,25 @@ export function useEditorPanelFileContentLoader({
            useAppStore.getState().setCsvPreviewOnly(id, Boolean(result.csvPreview))
          }
          delete fileLoadRetryAttemptsRef.current[id]
@@ -4654,7 +5249,28 @@ index fd0c8d9b7dc..8e7f07577ce 100644
          stampCleanTabDiskBaseline(id, result)
        } catch (err) {
          if (!requestCurrent()) {
-@@ -287,7 +299,8 @@ export function useEditorPanelFileContentLoader({
+           return
+         }
++        const error = err instanceof EditorRangeLoadError ? err.cause : err
+         const failure = getEditorFileLoadFailureContent(
+           useAppStore.getState(),
+           worktreeId,
+           readConnectionId,
+-          err
++          error
+         )
+         applyEditorFileLoadFailure({
+-          error: err,
++          error,
+           fileId: id,
+           filePath,
+           tabs: openFilesRef.current,
+-          failure,
++          failure: err instanceof EditorRangeLoadError ? err.markFailure(failure) : failure,
+           setFileContents: (update) =>
+             setFileContents((prev) =>
+               requestCurrent() ? (typeof update === 'function' ? update(prev) : update) : prev
+@@ -287,7 +300,8 @@ export function useEditorPanelFileContentLoader({
        fileReadGenerationRef,
        openFilesRef,
        outstandingFileReadsRef,
